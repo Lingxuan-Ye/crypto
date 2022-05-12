@@ -4,7 +4,7 @@ from multiprocessing import Process
 from pathlib import Path
 
 __author__ = "Lingxuan Ye"
-__version__ = "1.0.1"
+__version__ = "1.1.0"
 
 DEFAULT_CHUNK = 1048576
 HLEP_DOC = {
@@ -15,85 +15,99 @@ HLEP_DOC = {
 
     "-f":
     """
-    File(s) to be processed. Seperate paths with SPACE for multiple files.
-    If a directory path is given, it will recursively encrypt/decrypt
-    all the files in the directory.
+    file(s) to be processed. seperate paths with SPACE for multiple files.
+    if a directory path is given, it will recursively encrypt/decrypt
+    all the files in the directory. current working directory by default.
     """,
 
     "-p":
     """
-    Password for encryption and decryption.
+    password for encryption and decryption. required.
     """,
 
     "-s":
     """
-    Path of the saving directory ("./result" by default).
+    path of the saving directory. "./result" by default.
     """,
 
     "-e":
     """
-    Encrypt file(s).
+    encrypt file(s).
     """,
 
     "-d":
     """
-    Decrypt file(s).
+    decrypt file(s).
     """
 }
 
 
+try:
+    random.randbytes
+except AttributeError:
+    class _Random(random.Random):
+        def randbytes(self, n: int) -> bytes:
+            return self.getrandbits(n * 8).to_bytes(n, 'little')
+    _inst = _Random()
+    randbytes = _inst.randbytes
+    set_seed = _inst.seed
+else:
+    randbytes = random.randbytes
+    set_seed = random.seed
+
+
 def bytes_xor(x: bytes, y: bytes, length: int) -> bytes:
     """
-    len(y) should be equal to len(x)
-    due to performance concern, this function will NOT exam if len(y) == len(x)
+    len(y) should be equal to len(x).
+    due to performance concern, this function will NOT exam if len(y) == len(x).
     """
     result_int = int.from_bytes(x, "big") ^ int.from_bytes(y, "big")
     return result_int.to_bytes(length, "big")
 
 def main(file_path: Path, *,
          seed,
-         saving_directory: Path,
+         save_to: Path,
          chunk: int = DEFAULT_CHUNK,
          decrypt: bool = False):
     """
     buffer size in reading and writing file is determined by argument `chunk`,
     and is set to 1 MB by default.
     """
-    random.seed(seed, version=2)
+    set_seed(seed, version=2)
     if not decrypt:
         # encrypt
-        save_to = saving_directory / (file_path.name + ".cry")
+        save_to = save_to / (file_path.name + ".cry")
     else:
         # decrypt
-        save_to = saving_directory / file_path.stem
+        save_to = save_to / file_path.stem
     quotient, remainder = divmod(file_path.stat().st_size, chunk)
     with open(file_path, "rb") as f:
         with open(save_to, "wb") as g:
             for _ in range(quotient):
                 raw = f.read(chunk)
-                key = random.randbytes(chunk)
+                key = randbytes(chunk)
                 g.write(bytes_xor(raw, key, chunk))
             else:
                 raw = f.read(remainder)
-                key = random.randbytes(remainder)
+                key = randbytes(remainder)
                 g.write(bytes_xor(raw, key, remainder))
     print(f'success: "{file_path}" has been {"decrypted" if decrypt else "encrypted"}.')
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=HLEP_DOC["DESCRIPTION"])
-    parser.add_argument("-f", "--file_path", action="append", help=HLEP_DOC["-f"], metavar="")
-    parser.add_argument("-p", "--password", required=True, help=HLEP_DOC["-p"], metavar="")
-    parser.add_argument("-s", default="./result", help=HLEP_DOC["-s"], metavar="")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("-e", "--encrypt", action="store_true", help=HLEP_DOC["-e"])
     group.add_argument("-d", "--decrypt", action="store_true", help=HLEP_DOC["-d"])
+    parser.add_argument("-f", "--file_path", action="append", help=HLEP_DOC["-f"], metavar="")
+    parser.add_argument("-p", "--password", required=True, help=HLEP_DOC["-p"], metavar="")
+    parser.add_argument("-s", "--save_to", default="./result", help=HLEP_DOC["-s"], metavar="")
     args = parser.parse_args()
 
-    saving_directory: Path = Path(args.s)
+    save_to: Path = Path(args.save_to)
 
-    if not saving_directory.is_dir():
-        saving_directory.mkdir(parents=True)
+    if not save_to.is_dir():
+        save_to.mkdir(parents=True)
 
     if args.file_path is None:
         args.file_path = ["."]
@@ -116,7 +130,7 @@ if __name__ == "__main__":
         kwargs = {
             "file_path": file_path,
             "seed": args.password,
-            "saving_directory": saving_directory,
+            "save_to": save_to,
             "chunk": DEFAULT_CHUNK,
             "decrypt": args.decrypt
         }
