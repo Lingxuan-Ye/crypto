@@ -4,7 +4,7 @@ from multiprocessing import Process
 from pathlib import Path
 
 __author__ = "Lingxuan Ye"
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 DEFAULT_CHUNK = 1048576
 HLEP_DOC = {
@@ -77,11 +77,12 @@ def main(file_path: Path, *,
                 raw = f.read(remainder)
                 key = random.randbytes(remainder)
                 g.write(bytes_xor(raw, key, remainder))
+    print(f'success: "{file_path}" has been {"decrypted" if decrypt else "encrypted"}.')
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=HLEP_DOC["DESCRIPTION"])
-    parser.add_argument("-f", "--file_path", action="append", default=["."], help=HLEP_DOC["-f"], metavar="")
+    parser.add_argument("-f", "--file_path", action="append", help=HLEP_DOC["-f"], metavar="")
     parser.add_argument("-p", "--password", required=True, help=HLEP_DOC["-p"], metavar="")
     parser.add_argument("-s", default="./result", help=HLEP_DOC["-s"], metavar="")
     group = parser.add_mutually_exclusive_group(required=True)
@@ -89,17 +90,23 @@ if __name__ == "__main__":
     group.add_argument("-d", "--decrypt", action="store_true", help=HLEP_DOC["-d"])
     args = parser.parse_args()
 
-    path_list: list = [Path(i) for i in args.file_path]
-    file_path_list: list = []
     saving_directory: Path = Path(args.s)
 
     if not saving_directory.is_dir():
         saving_directory.mkdir(parents=True)
 
+    if args.file_path is None:
+        args.file_path = ["."]
+
+    path_list: list = [Path(i) for i in args.file_path]
+    file_path_list: list = []
+
+
     while path_list:
         path = path_list.pop()
         if path.is_file():
-            file_path_list.append(path)
+            if path.name != "crypto.py":
+                file_path_list.append(path)
         elif path.is_dir():
             path_list.extend(path.iterdir())
         else:
