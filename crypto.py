@@ -2,32 +2,18 @@ import argparse
 import random
 from multiprocessing import Process
 from pathlib import Path
+from typing import Union
 
 __author__ = "Lingxuan Ye"
-__version__ = "1.1.0"
+__version__ = "2.0.0"
 
-DEFAULT_CHUNK = 1048576
+NoneType = type(None)
+
+DEFAULT_CHUNK = 0x100000
 HLEP_DOC = {
     "DESCRIPTION":
     """
     Encrypt and decrypt sacrosanct legacies of little Ye.
-    """,
-
-    "-f":
-    """
-    file(s) to be processed. seperate paths with SPACE for multiple files.
-    if a directory path is given, it will recursively encrypt/decrypt
-    all the files in the directory. current working directory by default.
-    """,
-
-    "-p":
-    """
-    password for encryption and decryption. required.
-    """,
-
-    "-s":
-    """
-    path of the saving directory. "./result" by default.
     """,
 
     "-e":
@@ -38,6 +24,25 @@ HLEP_DOC = {
     "-d":
     """
     decrypt file(s).
+    """,
+
+    "-f":
+    """
+    file to be processed. if a directory path is given, it will recursively
+    encrypt/decrypt all the files in the directory. this option is allowed
+    to be specified multiple times and will be set to current working directory
+    if omitted.
+    """,
+
+    "-p":
+    """
+    password for encryption and decryption. required.
+    """,
+
+    "-s":
+    """
+    path of the saving directory. this option will be set to "./result"
+    if omitted.
     """
 }
 
@@ -64,34 +69,84 @@ def bytes_xor(x: bytes, y: bytes, length: int) -> bytes:
     result_int = int.from_bytes(x, "big") ^ int.from_bytes(y, "big")
     return result_int.to_bytes(length, "big")
 
-def main(file_path: Path, *,
-         seed,
-         save_to: Path,
-         chunk: int = DEFAULT_CHUNK,
-         decrypt: bool = False):
-    """
-    buffer size in reading and writing file is determined by argument `chunk`,
-    and is set to 1 MB by default.
-    """
+def encrypt(
+    file_path: Path, *,
+    seed: Union[NoneType, int, float, str, bytes, bytearray],
+    save_to: Path = Path.cwd(),
+    chunk: int = DEFAULT_CHUNK
+):
     set_seed(seed, version=2)
-    if not decrypt:
-        # encrypt
-        save_to = save_to / (file_path.name + ".cry")
-    else:
-        # decrypt
-        save_to = save_to / file_path.stem
-    quotient, remainder = divmod(file_path.stat().st_size, chunk)
     with open(file_path, "rb") as f:
+        save_to = save_to / (file_path.stem + ".cry")
+        body_size = file_path.stat().st_size
+        _quotient, _remainder = divmod(body_size, chunk)
         with open(save_to, "wb") as g:
-            for _ in range(quotient):
+            header = b"CRY\t" + file_path.name.encode("utf-8") + b"\n"
+            g.write(header)
+            for _ in range(_quotient):
                 raw = f.read(chunk)
                 key = randbytes(chunk)
                 g.write(bytes_xor(raw, key, chunk))
             else:
-                raw = f.read(remainder)
-                key = randbytes(remainder)
-                g.write(bytes_xor(raw, key, remainder))
-    print(f'success: "{file_path}" has been {"decrypted" if decrypt else "encrypted"}.')
+                raw = f.read(_remainder)
+                key = randbytes(_remainder)
+                g.write(bytes_xor(raw, key, _remainder))
+
+def decrypt(
+    file_path: Path, *,
+    seed: Union[NoneType, int, float, str, bytes, bytearray],
+    save_to: Path = Path.cwd(),
+    chunk: int = DEFAULT_CHUNK
+):
+    set_seed(seed, version=2)
+    with open(file_path, "rb") as f:
+        header = f.readline(chunk)
+        meta_list = header.strip().split(b"\t", 1)
+        if meta_list[0].lower() != b"cry":
+            return
+        file_name = meta_list[1].decode("utf-8")
+        save_to = save_to / file_name
+        body_size = file_path.stat().st_size - len(header)
+        _quotient, _remainder = divmod(body_size, chunk)
+        with open(save_to, "wb") as g:
+            for _ in range(_quotient):
+                raw = f.read(chunk)
+                key = randbytes(chunk)
+                g.write(bytes_xor(raw, key, chunk))
+            else:
+                raw = f.read(_remainder)
+                key = randbytes(_remainder)
+                g.write(bytes_xor(raw, key, _remainder))
+
+def main(mode: int, file_path: Path, **kwargs):
+    """
+    Parameters
+    ----------
+    mode : int
+        Determine whether to encrypt or decrypt.
+
+        - mode == 0, encrypt.
+        - mode != 0, decrypt.
+
+    file_path : Path
+        An instance of pathlib.Path indicating the file to be processed.
+
+    seed : NoneType | int | float | str | bytes | bytearray
+        Seed for the instance of random.Random or __main__._Random.
+
+    save_to : Path
+        An instance of pathlib.Path indicating the saving directory.
+
+    chunk : int
+        Determines the buffer size in I/O. It is set to 0x100000 by default,
+        which means the buffer size is 1 MB.
+    """
+    if mode == 0:
+        encrypt(file_path, **kwargs)
+        print(f'success: "{file_path}" has been encrypted.')
+    else:
+        decrypt(file_path, **kwargs)
+        print(f'success: "{file_path}" has been decrypted.')
 
 
 if __name__ == "__main__":
@@ -115,7 +170,6 @@ if __name__ == "__main__":
     path_list: list = [Path(i) for i in args.file_path]
     file_path_list: list = []
 
-
     while path_list:
         path = path_list.pop()
         if path.is_file():
@@ -128,10 +182,10 @@ if __name__ == "__main__":
 
     for file_path in file_path_list:
         kwargs = {
+            "mode": 0 if args.encrypt else 1,
             "file_path": file_path,
             "seed": args.password,
             "save_to": save_to,
             "chunk": DEFAULT_CHUNK,
-            "decrypt": args.decrypt
         }
         Process(target=main, kwargs=kwargs).start()
