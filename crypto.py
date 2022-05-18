@@ -1,11 +1,16 @@
 import argparse
 import random
+from base64 import b64decode, b64encode
 from hashlib import sha256
 from multiprocessing import Process
 from pathlib import Path, PosixPath
+from typing import Any, Union
 
 __author__ = "Lingxuan Ye"
-__version__ = "3.0.0"
+__version__ = "3.1.0"
+__all__ = ["bytes_xor", "encrypt", "decrypt"]
+
+NoneType = type(None)
 
 DEFAULT_CHUNK = 0x100000
 HLEP_DOC = {
@@ -72,7 +77,7 @@ try:
 except AttributeError:
     class _Random(random.Random):
         def randbytes(self, n: int) -> bytes:
-            return self.getrandbits(n * 8).to_bytes(n, 'little')
+            return self.getrandbits(n * 8).to_bytes(n, "little")
     _inst = _Random()
     randbytes = _inst.randbytes
     set_seed = _inst.seed
@@ -83,99 +88,48 @@ else:
 
 def bytes_xor(x: bytes, y: bytes, length: int) -> bytes:
     """
-    len(y) should be equal to len(x).
-    due to performance concern, this function will NOT exam if len(y) == len(x).
+    len(x), len(y) and argument 'length' should always be equal. Due to
+    performance concern, this function will NOT exam whether
+    len(y) == len(x) == length. Please pass arguments carefully.
     """
     result_int = int.from_bytes(x, "big") ^ int.from_bytes(y, "big")
     return result_int.to_bytes(length, "big")
 
 
-def encrypt(
-    file_path: Path, *,
+def _encrypt(
+    file_path: Path,
     seed: str,
-    save_to: Path = Path(),
-    chunk: int = DEFAULT_CHUNK,
-    version: int = 2
-):
-    """
-    A .cry format file is formed by header and body. The header specifies
-    the version of .cry format and the relative path of the original file,
-    which helps to reconstruct the directory structure.
+    save_to: Path,
+    chunk: int,
+    version: int
+) -> int:
 
-    Parameters
-    ----------
-    file_path : Path
-        An instance of pathlib.Path indicating the file to be encrypted.
-
-    seed : str
-        Seed for the instance of random.Random or __main__._Random.
-
-    save_to : Path
-        An instance of pathlib.Path indicating the saving directory.
-
-    chunk : int
-        Determines the buffer size in I/O. It is set to 0x100000 by default,
-        which means that the buffer size is 1 MB.
-
-    version : int
-        Determine the version of .cry format.
-        - 0         Save the original file name as plaintext in the header.
-        - 1         Save the original file name as ciphertext in the header.
-                    Reset seed, then encrypt. The body of encrypted file
-                    will be just the same as version 0 if the seed remains
-                    unchanged.
-        - 2         Save the original file name as ciphertext in the header.
-                    Change seed in particular way, then encrypt. The body
-                    of encrypted file will be different with differnent
-                    original file name. RECOMMENDED.
-        - elsewhere Follow the same behavior as version == 2 for now.
-                    NOT RECOMMENDED.
-    """
     set_seed(seed, version=2)
     file_path_bytes = bytes(file_path)
-
-    # for Python 3.10 or later #
-    # match version:
-    #     case 0:
-    #         file_name = file_path.stem + ".cry"
-    #         header = b"CRY\t" + b"0\t" + file_path_bytes + b"\n"
-    #     case 1:
-    #         file_name = sha256(file_path_bytes).hexdigest() + ".cry"
-    #         raw = file_path_bytes
-    #         length = len(raw)
-    #         key = randbytes(length)
-    #         header = b"CRY\t" + b"1\t" + bytes_xor(raw, key, length) + b"\n"
-    #         set_seed(seed, version=2)
-    #     case 2 | _:
-    #         file_name = sha256(file_path_bytes).hexdigest() + ".cry"
-    #         raw = file_path_bytes
-    #         length = len(raw)
-    #         key = randbytes(length)
-    #         header = b"CRY\t" + b"2\t" + bytes_xor(raw, key, length) + b"\n"
-    #         seed = seed + sha256(file_path_bytes).hexdigest()
-    #         set_seed(seed, version=2)
+    exit_code = 0
 
     if version == 0:
         file_name = file_path.stem + ".cry"
         header = b"CRY\t" + b"0\t" + file_path_bytes + b"\n"
-    elif version == 1:
-        file_name = sha256(file_path_bytes).hexdigest() + ".cry"
-        raw = file_path_bytes
-        length = len(raw)
-        key = randbytes(length)
-        header = b"CRY\t" + b"1\t" + bytes_xor(raw, key, length) + b"\n"
-        set_seed(seed, version=2)
     else:
         file_name = sha256(file_path_bytes).hexdigest() + ".cry"
         raw = file_path_bytes
         length = len(raw)
         key = randbytes(length)
-        header = b"CRY\t" + b"2\t" + bytes_xor(raw, key, length) + b"\n"
-        seed = seed + sha256(file_path_bytes).hexdigest()
-        set_seed(seed, version=2)
+        if version == 1:
+            header = b"CRY\t" + b"1\t" + b64encode(bytes_xor(raw, key, length)) + b"\n"
+            set_seed(seed, version=2)
+        elif version == 2:
+            header = b"CRY\t" + b"2\t" + b64encode(bytes_xor(raw, key, length)) + b"\n"
+            seed = seed + sha256(file_path_bytes).hexdigest()
+            set_seed(seed, version=2)
+        else:
+            exception_info = "value of argument 'version' must be 0, 1 or 2."
+            raise ValueError(exception_info)
 
     with open(file_path, "rb") as f:
         save_to = save_to / file_name
+        save_to.parent.mkdir(parents=True, exist_ok=True)
         body_size = file_path.stat().st_size
         _quotient, _remainder = divmod(body_size, chunk)
         with open(save_to, "wb") as g:
@@ -189,33 +143,99 @@ def encrypt(
                 key = randbytes(_remainder)
                 g.write(bytes_xor(raw, key, _remainder))
 
+    return exit_code
 
-def decrypt(
-    file_path: Path, *,
-    seed: str,
-    save_to: Path = Path(),
-    chunk: int = DEFAULT_CHUNK
-) -> int:
+
+def encrypt(
+    file_path: Union[Path, str, NoneType] = None, *,
+    seed: Any,
+    save_to: Union[Path, str, NoneType] = None,
+    chunk: int = DEFAULT_CHUNK,
+    version: int = 2
+):
     """
+    A .cry format file is formed by header and body. The header specifies
+    the version of .cry format and the relative path of the original file,
+    which helps to reconstruct the directory structure.
+
     Parameters
     ----------
-    file_path : Path
-        An instance of pathlib.Path indicating the file to be decrypted.
+    file_path : Path | str | NoneType
+        Specify the file to be encrypted.
 
     seed : str
         Seed for the instance of random.Random or __main__._Random.
 
-    save_to : Path
-        An instance of pathlib.Path indicating the saving directory.
+    save_to : Path | str | NoneType
+        Specify the directory to save encrypted file.
 
     chunk : int
-        Determines the buffer size in I/O. It is set to 0x100000 by default,
-        which means that the buffer size is 1 MB.
+        Determine the buffer size in I/O. It is set to 0x100000 by default,
+        which means the buffer size is 1 MB.
+
+    version : int
+        Determine the version of .cry format.
+        - 0         Save the original file name as plaintext in the header.
+        - 1         Save the original file name as ciphertext in the header.
+                    Reset seed, then encrypt. The body of encrypted file
+                    will be just the same as version 0 if the seed remains
+                    unchanged.
+        - 2         Save the original file name as ciphertext in the header.
+                    Change seed in particular way, then encrypt. The body
+                    of encrypted file will be different if the original file
+                    is renamed. RECOMMENDED.
     """
+    if isinstance(file_path, Path):
+        pass
+    elif isinstance(file_path, str):
+        file_path = Path(file_path)
+    elif file_path is None:
+        file_path = Path()
+    else:
+        exception_info = "argument 'file_path' must be 'str', 'NoneType' or " \
+                       + "'pathlib.Path' instance."
+        raise TypeError(exception_info)
+
+    if not isinstance(seed, str):
+        seed = str(seed)
+
+    if isinstance(save_to, Path):
+        pass
+    elif isinstance(save_to, str):
+        save_to = Path(save_to)
+    elif save_to is None:
+        save_to = Path("__encrypted__")
+    else:
+        exception_info = "argument 'save_to' must be 'str', 'NoneType' or " \
+                       + "'pathlib.Path' instance."
+        raise TypeError(exception_info)
+
+    if not isinstance(chunk, int):
+        exception_info = "argument 'chunk' must be 'int'."
+        raise TypeError(exception_info)
+
+    if not isinstance(version, int):
+        exception_info = "argument 'version' must be 'int'."
+        raise TypeError(exception_info)
+    elif version not in (0, 1, 2):
+        exception_info = "value of argument 'version' must be 0, 1 or 2."
+        raise ValueError(exception_info)
+
+    _encrypt(file_path, seed, save_to, chunk, version)
+
+
+def _decrypt(
+    file_path: Path,
+    seed: str,
+    save_to: Path,
+    chunk: int
+) -> int:
+
     set_seed(seed, version=2)
     exit_code = 0
+
     with open(file_path, "rb") as f:
-        header = f.readline(0x400)
+        header = f.readline(0x1000)
         if not header.endswith(b"\n"):
             exit_code = 1
             return exit_code
@@ -224,67 +244,44 @@ def decrypt(
             exit_code = 1
             return exit_code
 
-        # for Python 3.10 or later #
-        # match metadata[1]:
-        #     case b"0":
-        #         _file_path_str = metadata[-1].decode("utf-8")
-        #     case b"1":
-        #         raw = metadata[-1]
-        #         length = len(raw)
-        #         key = randbytes(length)
-        #         _file_path_str = bytes_xor(raw, key, length).decode("utf-8")
-        #         set_seed(seed, version=2)
-        #     case b"2":
-        #         raw = metadata[-1]
-        #         length = len(raw)
-        #         key = randbytes(length)
-        #         _file_path_bytes = bytes_xor(raw, key, length)
-        #         _file_path_str = _file_path_bytes.decode("utf-8")
-        #         seed = seed + sha256(_file_path_bytes).hexdigest()
-        #         set_seed(seed, version=2)
-        #     case _:
-        #         _file_path_str = metadata[-1].decode("utf-8")
-
         if metadata[1] == b"0":
-            _file_path_str = metadata[-1].decode("utf-8")
-        elif metadata[1] == b"1":
-            raw = metadata[-1]
+            original_path_str = metadata[-1].decode("utf-8")
+        else:
+            raw = b64decode(metadata[-1])
             length = len(raw)
             key = randbytes(length)
-            _file_path_str = bytes_xor(raw, key, length).decode("utf-8")
-            set_seed(seed, version=2)
-        elif metadata[1] == b"2":
-            raw = metadata[-1]
-            length = len(raw)
-            key = randbytes(length)
-            _file_path_bytes = bytes_xor(raw, key, length)
-            _file_path_str = _file_path_bytes.decode("utf-8")
-            seed = seed + sha256(_file_path_bytes).hexdigest()
-            set_seed(seed, version=2)
-        else:  # compatibility concern
-            _file_path_str = metadata[-1].decode("utf-8")
+            original_path_bytes = bytes_xor(raw, key, length)
+            original_path_str = original_path_bytes.decode("utf-8")
+            if metadata[1] == b"1":
+                set_seed(seed, version=2)
+            elif metadata[1] == b"2":
+                seed = seed + sha256(original_path_bytes).hexdigest()
+                set_seed(seed, version=2)
+            else:  # compatibility concern
+                original_path_str = metadata[-1].decode("utf-8")
 
-        _file_path = Path(_file_path_str)
-        _file_path_str = str(_file_path)  # return string representation of raw filesystem path
-        if _file_path.is_absolute():
-            save_to = save_to / _file_path.name
+        original_path = Path(original_path_str)
+        raw_filesystem_path = str(original_path)
+
+        if original_path.is_absolute():
+            save_to = save_to / original_path.name
             exit_code = -1
         else:
-            if isinstance(_file_path, PosixPath):
-                node_list = _file_path_str.split("/")
+            if isinstance(original_path, PosixPath):
+                node_list = raw_filesystem_path.split("/")
             else:  # isinstance(_file_path, WindowsPath)
-                node_list = _file_path_str.split("\\")
+                node_list = raw_filesystem_path.split("\\")
             for index, node in enumerate(node_list):
                 if node == "..":
                     node_list[index] = "__parent_directory__"
                 elif node == "__parent_directory__" or node.startswith("_ESC"):
                     node_list[index] = "_ESC" + node
             save_to = save_to / "/".join(node_list)
-            if not save_to.parent.is_dir():
-                save_to.parent.mkdir(parents=True)
+            save_to.parent.mkdir(parents=True, exist_ok=True)
 
         body_size = file_path.stat().st_size - len(header)
         _quotient, _remainder = divmod(body_size, chunk)
+
         with open(save_to, "wb") as g:
             for _ in range(_quotient):
                 raw = f.read(chunk)
@@ -294,55 +291,108 @@ def decrypt(
                 raw = f.read(_remainder)
                 key = randbytes(_remainder)
                 g.write(bytes_xor(raw, key, _remainder))
+
         return exit_code
 
 
-def main(*, mode: int, file_path: Path, quiet: bool = False, **kwargs):
+def decrypt(
+    file_path: Union[Path, str, NoneType] = None, *,
+    seed: Any,
+    save_to: Union[Path, str, NoneType] = None,
+    chunk: int = DEFAULT_CHUNK
+):
+    """
+    Parameters
+    ----------
+    file_path : Path | str | NoneType
+        Specify the file to be decrypted.
+
+    seed : str
+        Seed for the instance of random.Random or __main__._Random.
+
+    save_to : Path | str | NoneType
+        Specify the directory to save decrypted file.
+
+    chunk : int
+        Determine the buffer size in I/O. It is set to 0x100000 by default,
+        which means the buffer size is 1 MB.
+    """
+    if isinstance(file_path, Path):
+        pass
+    elif isinstance(file_path, str):
+        file_path = Path(file_path)
+    elif file_path is None:
+        file_path = Path()
+    else:
+        exception_info = "argument 'file_path' must be 'str', 'NoneType' or " \
+                       + "'pathlib.Path' instance."
+        raise TypeError(exception_info)
+
+    if not isinstance(seed, str):
+        seed = str(seed)
+
+    if isinstance(save_to, Path):
+        pass
+    elif isinstance(save_to, str):
+        save_to = Path(save_to)
+    elif save_to is None:
+        save_to = Path("__decrypted__")
+    else:
+        exception_info = "argument 'save_to' must be 'str', 'NoneType' or " \
+                       + "'pathlib.Path' instance."
+        raise TypeError(exception_info)
+
+    if not isinstance(chunk, int):
+        exception_info = "argument 'chunk' must be 'int'."
+        raise TypeError(exception_info)
+
+    _decrypt(file_path, seed, save_to, chunk)
+
+
+def main(*, mode: int, file_path: Path, quiet: bool, **kwargs):
     """
     Parameters
     ----------
     mode : int
         Determine whether to encrypt or decrypt.
         - 0         encrypt.
-        - elsewhere decrypt.
+        - 1         decrypt.
 
     file_path : Path
-        An instance of pathlib.Path indicating the file to be processed.
+        Specify the file be processed.
 
     seed : str
         Seed for the instance of random.Random or __main__._Random.
 
     save_to : Path
-        An instance of pathlib.Path indicating the saving directory.
+        Specify the directory to save encrypted file.
 
     chunk : int
-        Determines the buffer size in I/O. It is set to 0x100000 by default,
-        which means that the buffer size is 1 MB.
+        Determine the buffer size in I/O. It is set to 0x100000 by default,
+        which means the buffer size is 1 MB.
 
     version : int
-        Determine the version of .cry format. omitted if mode != 0.
+        Determine the version of .cry format.
         - 0         Save the original file name as plaintext in the header.
         - 1         Save the original file name as ciphertext in the header.
                     Reset seed, then encrypt. The body of encrypted file
                     will be just the same as version 0 if the seed remains
                     unchanged.
-        -  2        Save the original file name as ciphertext in the header.
+        - 2         Save the original file name as ciphertext in the header.
                     Change seed in particular way, then encrypt. The body
-                    of encrypted file will be different with differnent
-                    original file name. RECOMMENDED.
-        - elsewhere Follow the same behavior as version == 2 for now.
-                    NOT RECOMMENDED.
+                    of encrypted file will be different if the original file
+                    is renamed. RECOMMENDED.
 
     quiet : bool
         - True      Print quietly.
         - False     Print verbosely.
     """
     if mode == 0:
-        encrypt(file_path, **kwargs)
-        message = f'success: "{file_path}" has been encrypted.'
-    else:
+        _encrypt(file_path, **kwargs)
+        message = f"success: '{file_path}' has been encrypted."
+    elif mode == 1:
         kwargs.pop("version")
-        exit_code = decrypt(file_path, **kwargs)
+        exit_code = _decrypt(file_path, **kwargs)
         if exit_code < 0:
             if exit_code == -1:
                 warning_info = "can not reconstruct the directory structure."
@@ -351,13 +401,15 @@ def main(*, mode: int, file_path: Path, quiet: bool = False, **kwargs):
             message = f"warning: {warning_info}"
         elif exit_code > 0:
             if exit_code == 1:
-                error_info = f'format of "{file_path}" is unsupported.'
+                error_info = f"'{file_path}' is not an encrypted file."
             else:
                 error_info = "unknown error."
             message = f"error: {error_info}"
         else:
-            message = f'success: "{file_path}" has been decrypted.'
-
+            message = f"success: '{file_path}' has been decrypted."
+    else:
+        exception_info = "value of argument 'mode' must be 0 or 1."
+        raise ValueError(exception_info)
     if not quiet:
         print(message)
 
@@ -366,7 +418,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=HLEP_DOC["DESCRIPTION"], epilog=HLEP_DOC["EPILOG"])
     parser.add_argument("-f", "--file_path", action="append", help=HLEP_DOC["-f"], metavar="")
     parser.add_argument("-p", "--password", required=True, help=HLEP_DOC["-p"], metavar="")
-    parser.add_argument("-s", "--save_to", default="./result", help=HLEP_DOC["-s"], metavar="")
+    parser.add_argument("-s", "--save_to", help=HLEP_DOC["-s"], metavar="")
     mutex_group_0 = parser.add_mutually_exclusive_group()
     mutex_group_0.add_argument("-e", "--encrypt", action="store_true", help=HLEP_DOC["-e"])
     mutex_group_0.add_argument("-d", "--decrypt", action="store_true", help=HLEP_DOC["-d"])
@@ -376,16 +428,11 @@ if __name__ == "__main__":
     mutex_group_1.add_argument("-v", "--verbose", action="store_true", help=HLEP_DOC["-v"])
     args = parser.parse_args()
 
-    save_to = Path(args.save_to)
-    if not save_to.is_dir():
-        save_to.mkdir(parents=True)
-
     if args.file_path is None:
         args.file_path = ["."]
 
     path_list = [Path(i) for i in args.file_path]
     file_path_list = []
-
     while path_list:
         path = path_list.pop()
         if path.is_file():
@@ -394,7 +441,15 @@ if __name__ == "__main__":
         elif path.is_dir():
             path_list.extend(path.iterdir())
         elif not args.quiet:
-            print(f'error: can not find files in "{str(path)}".')
+            print(f"error: can not find files in '{str(path)}'.")
+
+    if args.save_to is None:
+        if not args.decrypt:
+            save_to = Path("__encrypted__")
+        else:
+            save_to = Path("__decrypted__")
+    else:
+        save_to = Path(args.save_to)
 
     for file_path in file_path_list:
         kwargs = {
