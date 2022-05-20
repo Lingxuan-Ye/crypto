@@ -1,89 +1,163 @@
 import argparse
 import random
+from argparse import Namespace
 from base64 import b64decode, b64encode
+from enum import Enum, auto
 from hashlib import sha256
-from multiprocessing import Process
-from pathlib import Path, PosixPath
+from multiprocessing import Pool
+from pathlib import Path, PosixPath, WindowsPath
 from typing import Any, Union
 
 __author__ = "Lingxuan Ye"
-__version__ = "3.1.0"
-__all__ = ["bytes_xor", "encrypt", "decrypt"]
+__version__ = "3.2.0"
+__all__ = ["Namespace", "bytes_xor", "encrypt", "decrypt", "task", "run"]
 
 NoneType = type(None)
-
-DEFAULT_CHUNK = 0x100000
-HLEP_DOC = {
-    "DESCRIPTION":
-    """
-    Encrypt and decrypt sacrosanct legacies of little Ye.
-    """,
-
-    "EPILOG":
-    """
-    This program will encrypt file(s) if the option from mutually exclusive
-    group [ -e | -d | -V ] is not specified.
-    """,
-
-    "-f":
-    """
-    file to be processed. if a directory path is given, it will recursively
-    encrypt/decrypt all the files in the directory. this option is allowed
-    to be specified multiple times and will be set to current working directory
-    if omitted.
-    """,
-
-    "-p":
-    """
-    password for encryption and decryption. required.
-    """,
-
-    "-s":
-    """
-    path of the saving directory. this option will be set to "./result"
-    if omitted.
-    """,
-
-    "-e":
-    """
-    encrypt file(s) with .cry format, version 2.
-    """,
-
-    "-d":
-    """
-    decrypt file(s).
-    """,
-
-    "-V":
-    """
-    encrypt file(s) with specified version of .cry format. please read source
-    code for further information.
-    """,
-
-    "-q":
-    """
-    print quietly.
-    """,
-
-    "-v":
-    """
-    print verbosely.
-    """
-}
-
 
 try:
     random.randbytes
 except AttributeError:
+
     class _Random(random.Random):
+
         def randbytes(self, n: int) -> bytes:
             return self.getrandbits(n * 8).to_bytes(n, "little")
+
     _inst = _Random()
     randbytes = _inst.randbytes
     set_seed = _inst.seed
 else:
     randbytes = random.randbytes
     set_seed = random.seed
+
+DEFAULT_CHUNK = 0x100000
+
+
+class Help(Enum):
+    DESCRIPTION = auto()
+    EPILOG = auto()
+    FILE = auto()
+    SAVE_TO = auto()
+    PASSWORD = auto()
+    ENCRYPT = auto()
+    DECRYPT = auto()
+    VERSION = auto()
+    QUIET = auto()
+    VERBOSE = auto()
+
+
+HLEP_DOC = {
+    Help.DESCRIPTION:
+    """
+    Encrypt and decrypt sacrosanct legacies of little Ye.
+    """,
+
+    Help.EPILOG:
+    """
+    Do encrypt if the option from mutually exclusive
+    group [ -e | -d | -V ] is not specified.
+    """,
+
+    Help.FILE:
+    """
+    file to be processed. if a directory is given, it will recursively
+    process all the files in the directory. this option is allowed
+    to be specified multiple times and will be set to current working directory
+    if omitted
+    """,
+
+    Help.SAVE_TO:
+    """
+    path of the saving directory
+    """,
+
+    Help.PASSWORD:
+    """
+    password for encryption and decryption (required)
+    """,
+
+
+    Help.ENCRYPT:
+    """
+    encrypt file(s) with .cry format, version 2
+    """,
+
+    Help.DECRYPT:
+    """
+    decrypt file(s)
+    """,
+
+    Help.VERSION:
+    """
+    encrypt file(s) with specified version of .cry format (please read source
+    code for further information)
+    """,
+
+    Help.QUIET:
+    """
+    print quietly
+    """,
+
+    Help.VERBOSE:
+    """
+    print verbosely
+    """
+}
+
+
+class Status(Enum):
+    EXIT = auto()
+    PATH_ERROR = auto()
+    ENCRYPT_SUCCESS = auto()
+    ENCRYPT_WARNING = auto()
+    ENCRYPT_ERROR = auto()
+    DECRYPT_SUCCESS = auto()
+    DECRYPT_WARNING = auto()
+    DECRYPT_ERROR = auto()
+    UNKNOWN_WARNING = auto()
+    UNKNOWN_ERROR = auto()
+
+
+STATUS_DOC = {
+    Status.EXIT: "finished.",
+    Status.PATH_ERROR: "error: cannot find files in '{file_path}'.",
+    Status.ENCRYPT_SUCCESS: "success: '{file_path}' has been encrypted.",
+    Status.ENCRYPT_WARNING: "__undefined__",
+    Status.ENCRYPT_ERROR: "__undefined__",
+    Status.DECRYPT_SUCCESS: "success: '{file_path}' has been decrypted.",
+    Status.DECRYPT_WARNING: "warning: can not reconstruct the directory structure.",
+    Status.DECRYPT_ERROR: "error: '{file_path}' is not an encrypted file.",
+    Status.UNKNOWN_WARNING: "warning: unknown warning.",
+    Status.UNKNOWN_ERROR: "warning: unknown error."
+}
+
+
+class Printer:
+    """
+    Singleton class.
+    """
+    __instance = None
+
+    def __new__(cls, *args, **kwargs):
+        if cls.__instance is None:
+            cls.__instance = super().__new__(cls)
+        return cls.__instance
+
+    def __init__(self, quiet: bool = False):
+        self.__quiet: bool = quiet
+        self.__state: str = "quiet" if quiet else "verbose"
+
+    @property
+    def state(self):
+        return self.__state
+
+    def set_state(self, quiet: bool):
+        self.__quiet = quiet
+        self.__state = "quiet" if quiet else "verbose"
+
+    def __call__(self, *args, force_print: bool = False, **kwargs):
+        if not self.__quiet or force_print:
+            print(*args, **kwargs)
 
 
 def bytes_xor(x: bytes, y: bytes, length: int) -> bytes:
@@ -96,36 +170,40 @@ def bytes_xor(x: bytes, y: bytes, length: int) -> bytes:
     return result_int.to_bytes(length, "big")
 
 
-def _encrypt(
-    file_path: Path,
-    seed: str,
-    save_to: Path,
-    chunk: int,
-    version: int
-) -> int:
+def _encrypt(file_path: Path, seed: str, save_to: Path, chunk: int,
+             version: int) -> Status:
 
     set_seed(seed, version=2)
     file_path_bytes = bytes(file_path)
-    exit_code = 0
 
     if version == 0:
         file_name = file_path.stem + ".cry"
-        header = b"CRY\t" + b"0\t" + file_path_bytes + b"\n"
+        header = b"CRY\t" \
+               + b"0\t" \
+               + file_path_bytes \
+               + b"\n"
     else:
         file_name = sha256(file_path_bytes).hexdigest() + ".cry"
         raw = file_path_bytes
         length = len(raw)
         key = randbytes(length)
         if version == 1:
-            header = b"CRY\t" + b"1\t" + b64encode(bytes_xor(raw, key, length)) + b"\n"
+            header = b"CRY\t" \
+                   + b"1\t" \
+                   + b64encode(bytes_xor(raw, key, length)) \
+                   + b"\n"
             set_seed(seed, version=2)
         elif version == 2:
-            header = b"CRY\t" + b"2\t" + b64encode(bytes_xor(raw, key, length)) + b"\n"
+            header = b"CRY\t" \
+                   + b"2\t" \
+                   + b64encode(bytes_xor(raw, key, length)) \
+                   + b"\n"
             seed = seed + sha256(file_path_bytes).hexdigest()
             set_seed(seed, version=2)
         else:
-            exception_info = "value of argument 'version' must be 0, 1 or 2."
-            raise ValueError(exception_info)
+            raise ValueError(
+                "value of argument 'version' must be 0, 1 or 2."
+            )
 
     with open(file_path, "rb") as f:
         save_to = save_to / file_name
@@ -143,16 +221,15 @@ def _encrypt(
                 key = randbytes(_remainder)
                 g.write(bytes_xor(raw, key, _remainder))
 
-    return exit_code
+    return Status.ENCRYPT_SUCCESS
 
 
-def encrypt(
-    file_path: Union[Path, str, NoneType] = None, *,
-    seed: Any,
-    save_to: Union[Path, str, NoneType] = None,
-    chunk: int = DEFAULT_CHUNK,
-    version: int = 2
-):
+def encrypt(file_path: Union[Path, str, NoneType] = None,
+            *,
+            seed: Any,
+            save_to: Union[Path, str, NoneType] = None,
+            chunk: int = DEFAULT_CHUNK,
+            version: int = 2):
     """
     A .cry format file is formed by header and body. The header specifies
     the version of .cry format and the relative path of the original file,
@@ -160,20 +237,20 @@ def encrypt(
 
     Parameters
     ----------
-    file_path : Path | str | NoneType
+    file_path: Path | str | NoneType
         Specify the file to be encrypted.
 
-    seed : str
+    seed: str
         Seed for the instance of random.Random or __main__._Random.
 
-    save_to : Path | str | NoneType
+    save_to: Path | str | NoneType
         Specify the directory to save encrypted file.
 
-    chunk : int
+    chunk: int
         Determine the buffer size in I/O. It is set to 0x100000 by default,
         which means the buffer size is 1 MB.
 
-    version : int
+    version: int
         Determine the version of .cry format.
         - 0         Save the original file name as plaintext in the header.
         - 1         Save the original file name as ciphertext in the header.
@@ -192,9 +269,10 @@ def encrypt(
     elif file_path is None:
         file_path = Path()
     else:
-        exception_info = "argument 'file_path' must be 'str', 'NoneType' or " \
-                       + "'pathlib.Path' instance."
-        raise TypeError(exception_info)
+        raise TypeError(
+            "argument 'file_path' must be 'str', 'NoneType' or " \
+            "'pathlib.Path' instance."
+        )
 
     if not isinstance(seed, str):
         seed = str(seed)
@@ -206,45 +284,36 @@ def encrypt(
     elif save_to is None:
         save_to = Path("__encrypted__")
     else:
-        exception_info = "argument 'save_to' must be 'str', 'NoneType' or " \
-                       + "'pathlib.Path' instance."
-        raise TypeError(exception_info)
+        raise TypeError(
+            "argument 'file_path' must be 'str', 'NoneType' or " \
+            "'pathlib.Path' instance."
+        )
 
     if not isinstance(chunk, int):
-        exception_info = "argument 'chunk' must be 'int'."
-        raise TypeError(exception_info)
+        raise TypeError("argument 'chunk' must be 'int'.")
 
     if not isinstance(version, int):
-        exception_info = "argument 'version' must be 'int'."
-        raise TypeError(exception_info)
+        raise TypeError("argument 'version' must be 'int'.")
     elif version not in (0, 1, 2):
-        exception_info = "value of argument 'version' must be 0, 1 or 2."
-        raise ValueError(exception_info)
+        raise ValueError("value of argument 'version' must be 0, 1 or 2.")
 
     _encrypt(file_path, seed, save_to, chunk, version)
 
 
-def _decrypt(
-    file_path: Path,
-    seed: str,
-    save_to: Path,
-    chunk: int
-) -> int:
+def _decrypt(file_path: Path, seed: str, save_to: Path, chunk: int) -> Status:
 
+    status = Status.DECRYPT_SUCCESS
     set_seed(seed, version=2)
-    exit_code = 0
 
     with open(file_path, "rb") as f:
         header = f.readline(0x1000)
         if not header.endswith(b"\n"):
-            exit_code = 1
-            return exit_code
+            return Status.DECRYPT_ERROR
         metadata = header.strip().split(b"\t")
         if metadata[0].lower() != b"cry":
-            exit_code = 1
-            return exit_code
+            return Status.DECRYPT_ERROR
 
-        if metadata[1] == b"0":
+        if metadata[1] == b"0" or metadata[1] not in (b"1", b"2"):
             original_path_str = metadata[-1].decode("utf-8")
         else:
             raw = b64decode(metadata[-1])
@@ -257,20 +326,20 @@ def _decrypt(
             elif metadata[1] == b"2":
                 seed = seed + sha256(original_path_bytes).hexdigest()
                 set_seed(seed, version=2)
-            else:  # compatibility concern
-                original_path_str = metadata[-1].decode("utf-8")
 
         original_path = Path(original_path_str)
         raw_filesystem_path = str(original_path)
 
         if original_path.is_absolute():
             save_to = save_to / original_path.name
-            exit_code = -1
+            status = Status.DECRYPT_WARNING
         else:
             if isinstance(original_path, PosixPath):
                 node_list = raw_filesystem_path.split("/")
-            else:  # isinstance(_file_path, WindowsPath)
+            elif isinstance(original_path, WindowsPath):
                 node_list = raw_filesystem_path.split("\\")
+            else:
+                return Status.UNKNOWN_ERROR
             for index, node in enumerate(node_list):
                 if node == "..":
                     node_list[index] = "__parent_directory__"
@@ -292,28 +361,27 @@ def _decrypt(
                 key = randbytes(_remainder)
                 g.write(bytes_xor(raw, key, _remainder))
 
-        return exit_code
+        return status
 
 
-def decrypt(
-    file_path: Union[Path, str, NoneType] = None, *,
-    seed: Any,
-    save_to: Union[Path, str, NoneType] = None,
-    chunk: int = DEFAULT_CHUNK
-):
+def decrypt(file_path: Union[Path, str, NoneType] = None,
+            *,
+            seed: Any,
+            save_to: Union[Path, str, NoneType] = None,
+            chunk: int = DEFAULT_CHUNK):
     """
     Parameters
     ----------
-    file_path : Path | str | NoneType
+    file_path: Path | str | NoneType
         Specify the file to be decrypted.
 
-    seed : str
+    seed: str
         Seed for the instance of random.Random or __main__._Random.
 
-    save_to : Path | str | NoneType
+    save_to: Path | str | NoneType
         Specify the directory to save decrypted file.
 
-    chunk : int
+    chunk: int
         Determine the buffer size in I/O. It is set to 0x100000 by default,
         which means the buffer size is 1 MB.
     """
@@ -324,9 +392,10 @@ def decrypt(
     elif file_path is None:
         file_path = Path()
     else:
-        exception_info = "argument 'file_path' must be 'str', 'NoneType' or " \
-                       + "'pathlib.Path' instance."
-        raise TypeError(exception_info)
+        raise TypeError(
+            "argument 'file_path' must be 'str', 'NoneType' or " \
+            "'pathlib.Path' instance."
+        )
 
     if not isinstance(seed, str):
         seed = str(seed)
@@ -338,40 +407,40 @@ def decrypt(
     elif save_to is None:
         save_to = Path("__decrypted__")
     else:
-        exception_info = "argument 'save_to' must be 'str', 'NoneType' or " \
-                       + "'pathlib.Path' instance."
-        raise TypeError(exception_info)
+        raise TypeError(
+            "argument 'save_to' must be 'str', 'NoneType' or " \
+            "'pathlib.Path' instance."
+        )
 
     if not isinstance(chunk, int):
-        exception_info = "argument 'chunk' must be 'int'."
-        raise TypeError(exception_info)
+        raise TypeError("argument 'chunk' must be 'int'.")
 
     _decrypt(file_path, seed, save_to, chunk)
 
 
-def main(*, mode: int, file_path: Path, quiet: bool, **kwargs):
+def task(*, mode: int, file_path: Path, printer: Printer, **kwargs):
     """
     Parameters
     ----------
-    mode : int
+    mode: int
         Determine whether to encrypt or decrypt.
         - 0         encrypt.
         - 1         decrypt.
 
-    file_path : Path
+    file_path: Path
         Specify the file be processed.
 
-    seed : str
+    seed: str
         Seed for the instance of random.Random or __main__._Random.
 
-    save_to : Path
+    save_to: Path
         Specify the directory to save encrypted file.
 
-    chunk : int
+    chunk: int
         Determine the buffer size in I/O. It is set to 0x100000 by default,
         which means the buffer size is 1 MB.
 
-    version : int
+    version: int
         Determine the version of .cry format.
         - 0         Save the original file name as plaintext in the header.
         - 1         Save the original file name as ciphertext in the header.
@@ -383,65 +452,40 @@ def main(*, mode: int, file_path: Path, quiet: bool, **kwargs):
                     of encrypted file will be different if the original file
                     is renamed. RECOMMENDED.
 
-    quiet : bool
-        - True      Print quietly.
-        - False     Print verbosely.
+    printer: Printer
+        Singleton instance of Printer determining whether to print quietly
+        or verbosely in the terminal.
     """
     if mode == 0:
-        _encrypt(file_path, **kwargs)
-        message = f"success: '{file_path}' has been encrypted."
+        status = _encrypt(file_path, **kwargs)
     elif mode == 1:
         kwargs.pop("version")
-        exit_code = _decrypt(file_path, **kwargs)
-        if exit_code < 0:
-            if exit_code == -1:
-                warning_info = "can not reconstruct the directory structure."
-            else:
-                warning_info = "unknown warning."
-            message = f"warning: {warning_info}"
-        elif exit_code > 0:
-            if exit_code == 1:
-                error_info = f"'{file_path}' is not an encrypted file."
-            else:
-                error_info = "unknown error."
-            message = f"error: {error_info}"
-        else:
-            message = f"success: '{file_path}' has been decrypted."
+        status = _decrypt(file_path, **kwargs)
     else:
-        exception_info = "value of argument 'mode' must be 0 or 1."
-        raise ValueError(exception_info)
-    if not quiet:
-        print(message)
+        raise ValueError("value of argument 'mode' must be 0 or 1.")
+    printer(STATUS_DOC[status].format(file_path=file_path))
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=HLEP_DOC["DESCRIPTION"], epilog=HLEP_DOC["EPILOG"])
-    parser.add_argument("-f", "--file_path", action="append", help=HLEP_DOC["-f"], metavar="")
-    parser.add_argument("-p", "--password", required=True, help=HLEP_DOC["-p"], metavar="")
-    parser.add_argument("-s", "--save_to", help=HLEP_DOC["-s"], metavar="")
-    mutex_group_0 = parser.add_mutually_exclusive_group()
-    mutex_group_0.add_argument("-e", "--encrypt", action="store_true", help=HLEP_DOC["-e"])
-    mutex_group_0.add_argument("-d", "--decrypt", action="store_true", help=HLEP_DOC["-d"])
-    mutex_group_0.add_argument("-V", "--version", default=2, choices=(0,1,2), type=int, help=HLEP_DOC["-V"], metavar="")
-    mutex_group_1 = parser.add_mutually_exclusive_group()
-    mutex_group_1.add_argument("-q", "--quiet", action="store_true", help=HLEP_DOC["-q"])
-    mutex_group_1.add_argument("-v", "--verbose", action="store_true", help=HLEP_DOC["-v"])
-    args = parser.parse_args()
+def main(args: Namespace):
+    """
+    Entry.
+    """
+    printer = Printer(args.quiet)
 
-    if args.file_path is None:
-        args.file_path = ["."]
-
-    path_list = [Path(i) for i in args.file_path]
-    file_path_list = []
+    file_list = []
+    if args.file is None:
+        path_list = [Path()]
+    else:
+        path_list = [Path(i) for i in args.file]
     while path_list:
         path = path_list.pop()
         if path.is_file():
             if path.name != "crypto.py":
-                file_path_list.append(path)
+                file_list.append(path)
         elif path.is_dir():
             path_list.extend(path.iterdir())
-        elif not args.quiet:
-            print(f"error: can not find files in '{str(path)}'.")
+        else:
+            printer(STATUS_DOC[Status.PATH_ERROR].format(file_path=str(path)))
 
     if args.save_to is None:
         if not args.decrypt:
@@ -451,7 +495,8 @@ if __name__ == "__main__":
     else:
         save_to = Path(args.save_to)
 
-    for file_path in file_path_list:
+    process_pool = Pool()
+    for file_path in file_list:
         kwargs = {
             "mode": 1 if args.decrypt else 0,
             "file_path": file_path,
@@ -459,6 +504,70 @@ if __name__ == "__main__":
             "save_to": save_to,
             "chunk": DEFAULT_CHUNK,
             "version": args.version,
-            "quiet": args.quiet
+            "printer": printer
         }
-        Process(target=main, kwargs=kwargs).start()
+        process_pool.apply_async(task, kwds=kwargs)
+    process_pool.close()
+    process_pool.join()
+    printer(STATUS_DOC[Status.EXIT], force_print=True)
+
+
+run = main
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description=HLEP_DOC[Help.DESCRIPTION],
+        epilog=HLEP_DOC[Help.EPILOG]
+    )
+
+    parser.add_argument(
+        "-f", "--file",
+        action="append",
+        help=HLEP_DOC[Help.FILE],
+        metavar=""
+    )
+    parser.add_argument(
+        "-s", "--save_to",
+        help=HLEP_DOC[Help.SAVE_TO],
+        metavar=""
+    )
+    parser.add_argument(
+        "-p", "--password",
+        required=True,
+        help=HLEP_DOC[Help.PASSWORD],
+        metavar=""
+    )
+
+    action_group = parser.add_mutually_exclusive_group()
+    action_group.add_argument(
+        "-e", "--encrypt",
+        action="store_true",
+        help=HLEP_DOC[Help.ENCRYPT]
+    )
+    action_group.add_argument(
+        "-d", "--decrypt",
+        action="store_true",
+        help=HLEP_DOC[Help.DECRYPT]
+    )
+    action_group.add_argument(
+        "-V", "--version",
+        default=2,
+        choices=(0, 1, 2),
+        type=int,
+        help=HLEP_DOC[Help.VERSION],
+        metavar=""
+    )
+
+    print_control = parser.add_mutually_exclusive_group()
+    print_control.add_argument(
+        "-q", "--quiet",
+        action="store_true",
+        help=HLEP_DOC[Help.QUIET]
+    )
+    print_control.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help=HLEP_DOC[Help.VERBOSE]
+    )
+
+    main(parser.parse_args())
