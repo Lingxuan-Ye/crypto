@@ -9,10 +9,12 @@ from pathlib import Path, PosixPath, WindowsPath
 from typing import Any, Union
 
 __author__ = "Lingxuan Ye"
-__version__ = "3.2.0"
+__version__ = "3.2.1"
 __all__ = ["Namespace", "bytes_xor", "encrypt", "decrypt", "task", "run"]
 
 NoneType = type(None)
+
+DEFAULT_CHUNK = 0x100000
 
 try:
     random.randbytes
@@ -30,106 +32,72 @@ else:
     randbytes = random.randbytes
     set_seed = random.seed
 
-DEFAULT_CHUNK = 0x100000
-
 
 class Help(Enum):
-    DESCRIPTION = auto()
-    EPILOG = auto()
-    FILE = auto()
-    SAVE_TO = auto()
-    PASSWORD = auto()
-    ENCRYPT = auto()
-    DECRYPT = auto()
-    VERSION = auto()
-    QUIET = auto()
-    VERBOSE = auto()
-
-
-HLEP_DOC = {
-    Help.DESCRIPTION:
     """
-    Encrypt and decrypt sacrosanct legacies of little Ye.
-    """,
+    'argparse.ArgumentParser' will remove leading and trailing whitespace,
+    including newline. Therefore docstrings are recommended to assign members.
 
-    Help.EPILOG:
+    Note that help info will NOT display in the terminal as what it looks like
+    in the docstring.
     """
-    Do encrypt if the option from mutually exclusive
-    group [ -e | -d | -V ] is not specified.
-    """,
 
-    Help.FILE:
+    DESCRIPTION = """
+        Encrypt and decrypt sacrosanct legacies of little Ye.
     """
-    file to be processed. if a directory is given, it will recursively
-    process all the files in the directory. this option is allowed
-    to be specified multiple times and will be set to current working directory
-    if omitted
-    """,
 
-    Help.SAVE_TO:
+    EPILOG = """
+        Do encrypt if the option from mutually exclusive
+        group [ -e | -d | -V ] is not specified.
     """
-    path of the saving directory
-    """,
 
-    Help.PASSWORD:
+    FILE = """
+        file to be processed. if a directory is given, it will recursively
+        process all the files in the directory. this option is allowed
+        to be specified multiple times and will be set to current working
+        directory if omitted
     """
-    password for encryption and decryption (required)
-    """,
 
+    SAVE_TO = """
+        path of the saving directory
+    """
 
-    Help.ENCRYPT:
+    PASSWORD = """
+        password for encryption and decryption (required)
     """
-    encrypt file(s) with .cry format, version 2
-    """,
+    ENCRYPT = """
+        encrypt file(s) with .cry format, version 2
+    """
 
-    Help.DECRYPT:
+    DECRYPT = """
+        decrypt file(s)
     """
-    decrypt file(s)
-    """,
 
-    Help.VERSION:
+    VERSION = """
+        encrypt file(s) with specified version of .cry format (please read
+        source code for further information)
     """
-    encrypt file(s) with specified version of .cry format (please read source
-    code for further information)
-    """,
 
-    Help.QUIET:
+    QUIET = """
+        print quietly
     """
-    print quietly
-    """,
 
-    Help.VERBOSE:
+    VERBOSE = """
+        print verbosely
     """
-    print verbosely
-    """
-}
 
 
 class Status(Enum):
-    EXIT = auto()
-    PATH_ERROR = auto()
-    ENCRYPT_SUCCESS = auto()
-    ENCRYPT_WARNING = auto()
-    ENCRYPT_ERROR = auto()
-    DECRYPT_SUCCESS = auto()
-    DECRYPT_WARNING = auto()
-    DECRYPT_ERROR = auto()
-    UNKNOWN_WARNING = auto()
-    UNKNOWN_ERROR = auto()
-
-
-STATUS_DOC = {
-    Status.EXIT: "finished.",
-    Status.PATH_ERROR: "error: cannot find files in '{file_path}'.",
-    Status.ENCRYPT_SUCCESS: "success: '{file_path}' has been encrypted.",
-    Status.ENCRYPT_WARNING: "__undefined__",
-    Status.ENCRYPT_ERROR: "__undefined__",
-    Status.DECRYPT_SUCCESS: "success: '{file_path}' has been decrypted.",
-    Status.DECRYPT_WARNING: "warning: can not reconstruct the directory structure.",
-    Status.DECRYPT_ERROR: "error: '{file_path}' is not an encrypted file.",
-    Status.UNKNOWN_WARNING: "warning: unknown warning.",
-    Status.UNKNOWN_ERROR: "warning: unknown error."
-}
+    EXIT = "finished."
+    PATH_ERROR = "error: cannot find files in '{file_path}'."
+    ENCRYPT_SUCCESS = "success: '{file_path}' has been encrypted."
+    ENCRYPT_WARNING = "__encrypt_warning__"
+    ENCRYPT_ERROR = "__encrypt_error__"
+    DECRYPT_SUCCESS = "success: '{file_path}' has been decrypted."
+    DECRYPT_WARNING = "warning: can not reconstruct the directory structure."
+    DECRYPT_ERROR = "error: '{file_path}' is not an encrypted file."
+    UNKNOWN_WARNING = "warning: unknown warning."
+    UNKNOWN_ERROR = "warning: unknown error."
 
 
 class Printer:
@@ -176,6 +144,8 @@ def _encrypt(file_path: Path, seed: str, save_to: Path, chunk: int,
     set_seed(seed, version=2)
     file_path_bytes = bytes(file_path)
 
+    if version not in (0, 1, 2):
+        raise ValueError("value of argument 'version' must be 0, 1 or 2.")
     if version == 0:
         file_name = file_path.stem + ".cry"
         header = b"CRY\t" \
@@ -187,23 +157,19 @@ def _encrypt(file_path: Path, seed: str, save_to: Path, chunk: int,
         raw = file_path_bytes
         length = len(raw)
         key = randbytes(length)
-        if version == 1:
-            header = b"CRY\t" \
-                   + b"1\t" \
-                   + b64encode(bytes_xor(raw, key, length)) \
-                   + b"\n"
-            set_seed(seed, version=2)
-        elif version == 2:
-            header = b"CRY\t" \
-                   + b"2\t" \
-                   + b64encode(bytes_xor(raw, key, length)) \
-                   + b"\n"
-            seed = seed + sha256(file_path_bytes).hexdigest()
-            set_seed(seed, version=2)
-        else:
-            raise ValueError(
-                "value of argument 'version' must be 0, 1 or 2."
-            )
+    if version == 1:
+        header = b"CRY\t" \
+               + b"1\t" \
+               + b64encode(bytes_xor(raw, key, length)) \
+               + b"\n"
+        set_seed(seed, version=2)
+    if version == 2:
+        header = b"CRY\t" \
+               + b"2\t" \
+               + b64encode(bytes_xor(raw, key, length)) \
+               + b"\n"
+        seed = seed + sha256(file_path_bytes).hexdigest()
+        set_seed(seed, version=2)
 
     with open(file_path, "rb") as f:
         save_to = save_to / file_name
@@ -313,7 +279,7 @@ def _decrypt(file_path: Path, seed: str, save_to: Path, chunk: int) -> Status:
         if metadata[0].lower() != b"cry":
             return Status.DECRYPT_ERROR
 
-        if metadata[1] == b"0" or metadata[1] not in (b"1", b"2"):
+        if metadata[1] == b"0" or metadata[1] not in (b"0", b"1", b"2"):
             original_path_str = metadata[-1].decode("utf-8")
         else:
             raw = b64decode(metadata[-1])
@@ -321,11 +287,11 @@ def _decrypt(file_path: Path, seed: str, save_to: Path, chunk: int) -> Status:
             key = randbytes(length)
             original_path_bytes = bytes_xor(raw, key, length)
             original_path_str = original_path_bytes.decode("utf-8")
-            if metadata[1] == b"1":
-                set_seed(seed, version=2)
-            elif metadata[1] == b"2":
-                seed = seed + sha256(original_path_bytes).hexdigest()
-                set_seed(seed, version=2)
+        if metadata[1] == b"1":
+            set_seed(seed, version=2)
+        if metadata[1] == b"2":
+            seed = seed + sha256(original_path_bytes).hexdigest()
+            set_seed(seed, version=2)
 
         original_path = Path(original_path_str)
         raw_filesystem_path = str(original_path)
@@ -463,7 +429,7 @@ def task(*, mode: int, file_path: Path, printer: Printer, **kwargs):
         status = _decrypt(file_path, **kwargs)
     else:
         raise ValueError("value of argument 'mode' must be 0 or 1.")
-    printer(STATUS_DOC[status].format(file_path=file_path))
+    printer(status.value.format(file_path=file_path))
 
 
 def main(args: Namespace):
@@ -485,7 +451,7 @@ def main(args: Namespace):
         elif path.is_dir():
             path_list.extend(path.iterdir())
         else:
-            printer(STATUS_DOC[Status.PATH_ERROR].format(file_path=str(path)))
+            printer(Status.PATH_ERROR.value.format(file_path=str(path)))
 
     if args.save_to is None:
         if not args.decrypt:
@@ -509,32 +475,32 @@ def main(args: Namespace):
         process_pool.apply_async(task, kwds=kwargs)
     process_pool.close()
     process_pool.join()
-    printer(STATUS_DOC[Status.EXIT], force_print=True)
+    printer(Status.EXIT.value, force_print=True)
 
 
 run = main
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description=HLEP_DOC[Help.DESCRIPTION],
-        epilog=HLEP_DOC[Help.EPILOG]
+        description=Help.DESCRIPTION.value,
+        epilog=Help.EPILOG.value
     )
 
     parser.add_argument(
         "-f", "--file",
         action="append",
-        help=HLEP_DOC[Help.FILE],
+        help=Help.FILE.value,
         metavar=""
     )
     parser.add_argument(
         "-s", "--save_to",
-        help=HLEP_DOC[Help.SAVE_TO],
+        help=Help.SAVE_TO.value,
         metavar=""
     )
     parser.add_argument(
         "-p", "--password",
         required=True,
-        help=HLEP_DOC[Help.PASSWORD],
+        help=Help.PASSWORD.value,
         metavar=""
     )
 
@@ -542,19 +508,19 @@ if __name__ == "__main__":
     action_group.add_argument(
         "-e", "--encrypt",
         action="store_true",
-        help=HLEP_DOC[Help.ENCRYPT]
+        help=Help.ENCRYPT.value
     )
     action_group.add_argument(
         "-d", "--decrypt",
         action="store_true",
-        help=HLEP_DOC[Help.DECRYPT]
+        help=Help.DECRYPT.value
     )
     action_group.add_argument(
         "-V", "--version",
         default=2,
         choices=(0, 1, 2),
         type=int,
-        help=HLEP_DOC[Help.VERSION],
+        help=Help.VERSION.value,
         metavar=""
     )
 
@@ -562,12 +528,12 @@ if __name__ == "__main__":
     print_control.add_argument(
         "-q", "--quiet",
         action="store_true",
-        help=HLEP_DOC[Help.QUIET]
+        help=Help.QUIET.value
     )
     print_control.add_argument(
         "-v", "--verbose",
         action="store_true",
-        help=HLEP_DOC[Help.VERBOSE]
+        help=Help.VERBOSE.value
     )
 
     main(parser.parse_args())
