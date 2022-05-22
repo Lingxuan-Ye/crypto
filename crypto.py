@@ -2,14 +2,14 @@ import argparse
 import random
 from argparse import Namespace
 from base64 import b64decode, b64encode
-from enum import Enum, auto
+from enum import Enum
 from hashlib import sha256
 from multiprocessing import Pool
 from pathlib import Path, PosixPath, WindowsPath
-from typing import Any, Union
+from typing import Any, NamedTuple, Union
 
 __author__ = "Lingxuan Ye"
-__version__ = "3.2.1"
+__version__ = "3.2.2"
 __all__ = ["Namespace", "bytes_xor", "encrypt", "decrypt", "task", "run"]
 
 NoneType = type(None)
@@ -100,6 +100,49 @@ class Status(Enum):
     UNKNOWN_ERROR = "warning: unknown error."
 
 
+class HeaderTuple(NamedTuple):
+
+    type: bytes
+    version: bytes
+    path: bytes
+
+    def b64encode(self):
+        return self._replace(path=b64encode(self.path))
+
+    def b64decode(self):
+        return self._replace(path=b64decode(self.path))
+
+    @classmethod
+    def from_bytes(cls, header: bytes):
+        metadata = header.strip().split(b"\t")
+        if len(metadata) == 2:
+            if metadata[0].isalpha():
+                return cls._make((metadata[0], b"0", metadata[1]))
+        elif len(metadata) == 3:
+            if metadata[0].isalpha() and metadata[1].isdigit():
+                return cls._make(metadata)
+        else:
+            raise ValueError("invalid header")
+
+    def to_bytes(self):
+        return b"\t".join(self) + b"\n"
+
+    @classmethod
+    def preset(cls, path: Union[bytes, str, Path]):
+        if isinstance(path, bytes):
+            pass
+        elif isinstance(path, str):
+            path = bytes(path, "utf-8")
+        elif isinstance(path, Path):
+            path = bytes(path)
+        else:
+            raise ValueError(
+                "argument 'path' must be 'byte', 'str' or "
+                "'pathlib.Path' instance."
+            )
+        return cls(b"CRY", b"2", path)
+
+
 class Printer:
     """
     Singleton class.
@@ -148,26 +191,18 @@ def _encrypt(file_path: Path, seed: str, save_to: Path, chunk: int,
         raise ValueError("value of argument 'version' must be 0, 1 or 2.")
     if version == 0:
         file_name = file_path.stem + ".cry"
-        header = b"CRY\t" \
-               + b"0\t" \
-               + file_path_bytes \
-               + b"\n"
+        header = HeaderTuple(b"CRY", b"0", file_path_bytes).to_bytes()
     else:
         file_name = sha256(file_path_bytes).hexdigest() + ".cry"
         raw = file_path_bytes
         length = len(raw)
         key = randbytes(length)
+        encrypted = bytes_xor(raw, key, length)
     if version == 1:
-        header = b"CRY\t" \
-               + b"1\t" \
-               + b64encode(bytes_xor(raw, key, length)) \
-               + b"\n"
+        header = HeaderTuple(b"CRY", b"1", encrypted).b64encode().to_bytes()
         set_seed(seed, version=2)
     if version == 2:
-        header = b"CRY\t" \
-               + b"2\t" \
-               + b64encode(bytes_xor(raw, key, length)) \
-               + b"\n"
+        header = HeaderTuple(b"CRY", b"2", encrypted).b64encode().to_bytes()
         seed = seed + sha256(file_path_bytes).hexdigest()
         set_seed(seed, version=2)
 
@@ -236,7 +271,7 @@ def encrypt(file_path: Union[Path, str, NoneType] = None,
         file_path = Path()
     else:
         raise TypeError(
-            "argument 'file_path' must be 'str', 'NoneType' or " \
+            "argument 'file_path' must be 'str', 'NoneType' or "
             "'pathlib.Path' instance."
         )
 
@@ -251,7 +286,7 @@ def encrypt(file_path: Union[Path, str, NoneType] = None,
         save_to = Path("__encrypted__")
     else:
         raise TypeError(
-            "argument 'file_path' must be 'str', 'NoneType' or " \
+            "argument 'file_path' must be 'str', 'NoneType' or "
             "'pathlib.Path' instance."
         )
 
@@ -275,21 +310,25 @@ def _decrypt(file_path: Path, seed: str, save_to: Path, chunk: int) -> Status:
         header = f.readline(0x1000)
         if not header.endswith(b"\n"):
             return Status.DECRYPT_ERROR
-        metadata = header.strip().split(b"\t")
-        if metadata[0].lower() != b"cry":
+        try:
+            header_tuple = HeaderTuple.from_bytes(header)
+        except ValueError:
             return Status.DECRYPT_ERROR
-
-        if metadata[1] == b"0" or metadata[1] not in (b"0", b"1", b"2"):
-            original_path_str = metadata[-1].decode("utf-8")
+        if header_tuple.type.upper() != b"CRY":
+            return Status.DECRYPT_ERROR
+        if header_tuple.version not in (b"0", b"1", b"2"):
+            return Status.DECRYPT_ERROR
+        if header_tuple.version == b"0":
+            original_path_str = header_tuple.path.decode("utf-8")
         else:
-            raw = b64decode(metadata[-1])
+            raw = header_tuple.b64decode().path
             length = len(raw)
             key = randbytes(length)
             original_path_bytes = bytes_xor(raw, key, length)
             original_path_str = original_path_bytes.decode("utf-8")
-        if metadata[1] == b"1":
+        if header_tuple.version == b"1":
             set_seed(seed, version=2)
-        if metadata[1] == b"2":
+        if header_tuple.version == b"2":
             seed = seed + sha256(original_path_bytes).hexdigest()
             set_seed(seed, version=2)
 
@@ -359,7 +398,7 @@ def decrypt(file_path: Union[Path, str, NoneType] = None,
         file_path = Path()
     else:
         raise TypeError(
-            "argument 'file_path' must be 'str', 'NoneType' or " \
+            "argument 'file_path' must be 'str', 'NoneType' or "
             "'pathlib.Path' instance."
         )
 
@@ -374,7 +413,7 @@ def decrypt(file_path: Union[Path, str, NoneType] = None,
         save_to = Path("__decrypted__")
     else:
         raise TypeError(
-            "argument 'save_to' must be 'str', 'NoneType' or " \
+            "argument 'save_to' must be 'str', 'NoneType' or "
             "'pathlib.Path' instance."
         )
 
