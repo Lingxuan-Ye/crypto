@@ -9,7 +9,7 @@ from pathlib import Path, PosixPath, WindowsPath
 from typing import Any, NamedTuple, Optional, Union
 
 __author__ = "Lingxuan Ye"
-__version__ = "3.2.3"
+__version__ = "3.2.4"
 __all__ = ["Namespace", "bytes_xor", "encrypt", "decrypt", "task", "run"]
 
 NoneType = type(None)
@@ -102,8 +102,56 @@ class Status(Enum):
 
 
 class HeaderTuple(NamedTuple):
+    """
+    Header Example
+    --------------
+    | format | version |  password_hash  |  path   |
+    ├--------|---------|-----------------|---------┤
+    | b"CRY" |  b"2"   | b"ABCabc123..." | b'Zm9v' |
 
-    type: bytes
+    Note that components of a header is seperated by b"\t", and that at the end
+    of a header, there will be a newline b"\n" following.
+
+    Components
+    ----------
+    format:
+        Specify the format of encrypted file.
+        - b'CRY'    The only available format for now.
+
+    version:
+        Version of .cry format.
+        - b"0"      Original file path is saved as plaintext.
+        - b"1"      Original file path is saved as ciphertext. To be more
+                    specific, the path will be encrypted by function
+                    'bytes_xor' with specified seed, then be encoded to Base64
+                    in order not to break the header line. Reset seed, then
+                    encrypt.
+        - b"2"      Original file path is saved as ciphertext. To be more
+                    specific, the path will be encrypted by function
+                    'bytes_xor' with specified seed, then be encoded to Base64
+                    in order not to break the header line. Change seed as
+                    follow:
+                        seed = seed + sha256(file_path_bytes).hexdigest()
+                    where 'file_path_bytes' are bytes form of original file
+                    path. After that, encrypt file.
+        In some old versions of .cry format, this component of header may not
+        exist. Files in those versions will be considered as b"0".
+
+    password_hash:
+        Use 'hashlib.sha256' and some other methods to get bytes of HEXADECIMAL
+        (in order not to break the header line) digest of the password to
+        further verify whether the password for decryption is correct. In some
+        old versions of .cry format, this component of header may not exist.
+        Files in those versions will be continue decrypting with incorrect
+        password by mistake.
+
+    path:
+        As aforementioned, how the original file path is saved depends on the
+        version of .cry format. The principle is that path must be processed
+        properly in order not to break the header line.
+    """
+
+    format: bytes
     version: bytes
     password_hash: Optional[bytes]
     path: bytes
@@ -116,30 +164,34 @@ class HeaderTuple(NamedTuple):
 
     @classmethod
     def from_bytes(cls, header: bytes):
+        has_error: bool = True
         metadata: list = header.strip().split(b"\t")
         if len(metadata) == 2:
-            # header == b"{type}\t{path}\n"
+            # header == b"{format}\t{path}\n"
             if metadata[0].isalpha():
                 metadata.insert(1, b"0")
                 metadata.insert(2, None)
+                has_error = False
                 return cls._make(metadata)
         elif len(metadata) == 3:
-            # header == b"{type}\t{version}\t{path}\n"
+            # header == b"{format}\t{version}\t{path}\n"
             if all((
                 metadata[0].isalpha(),
                 metadata[1].isdigit()
             )):
                 metadata.insert(2, None)
+                has_error = False
                 return cls._make(metadata)
         elif len(metadata) == 4:
-            # header == b"{type}\t{version}\t{password_hash}\t{path}\n"
+            # header == b"{format}\t{version}\t{password_hash}\t{path}\n"
             if all((
                 metadata[0].isalpha(),
                 metadata[1].isdigit(),
-                metadata[2].isalpha()
+                metadata[2].isalnum()
             )):
+                has_error = False
                 return cls._make(metadata)
-        else:
+        if has_error:
             raise ValueError("invalid header")
 
     def to_bytes(self):
@@ -153,7 +205,7 @@ class HeaderTuple(NamedTuple):
         cls,
         path: Union[bytes, str, Path],
         *,
-        type_: Union[bytes, str] = b"CRY",
+        format: Union[bytes, str] = b"CRY",
         version: Union[bytes, str, int] = b"2",
         password: Union[bytes, str, NoneType] = None
     ):
@@ -168,17 +220,17 @@ class HeaderTuple(NamedTuple):
                 "argument 'path' must be 'byte', 'str' or "
                 "'pathlib.Path' instance."
             )
-        if isinstance(type_, bytes) and type_.isalpha():
+        if isinstance(format, bytes) and format.isalpha():
             pass
-        elif isinstance(type_, str) and type_.isalpha():
-            type_ = type_.encode("utf-8")
+        elif isinstance(format, str) and format.isalpha():
+            format = format.encode("utf-8")
         else:
             raise ValueError(
-                "argument 'type_' must be 'byte' or 'str'."
+                "argument 'format' must be 'byte' or 'str'."
             )
-        if isinstance(version, bytes) and type_.isdigit():
+        if isinstance(version, bytes) and version.isdigit():
             pass
-        elif isinstance(version, str) and type_.isdigit():
+        elif isinstance(version, str) and version.isdigit():
             version = version.encode("utf-8")
         elif isinstance(version, int):
             version = str(version).encode("utf-8")
@@ -189,14 +241,15 @@ class HeaderTuple(NamedTuple):
         if password is None:
             password_hash = None
         elif isinstance(password, bytes):
-            password_hash = sha256(password).digest()
+            password_hash = sha256(password).hexdigest().encode("utf-8")
         elif isinstance(password, str):
-            password_hash = sha256(password.encode("utf-8")).digest()
+            password = password.encode("utf-8")
+            password_hash = sha256(password).hexdigest().encode("utf-8")
         else:
             raise ValueError(
                 "argument 'password' must be 'byte', 'str' or 'NoneType'."
             )
-        return cls(type_, version, password_hash, path)
+        return cls(format, version, password_hash, path)
 
 
 class Printer:
@@ -258,19 +311,19 @@ def _encrypt(file_path: Path, seed: str, save_to: Path, chunk: int,
         raw = file_path_bytes
         length = len(raw)
         key = randbytes(length)
-        encrypted = bytes_xor(raw, key, length)
+        encrypted_path = bytes_xor(raw, key, length)
     if version == 1:
         header = HeaderTuple.custom_init(
             version=b"1",
             password=seed,
-            path=encrypted
+            path=encrypted_path
         ).b64encode().to_bytes()
         set_seed(seed, version=2)
     if version == 2:
         header = HeaderTuple.custom_init(
             version=b"2",
             password=seed,
-            path=encrypted
+            path=encrypted_path
         ).b64encode().to_bytes()
         seed = seed + sha256(file_path_bytes).hexdigest()
         set_seed(seed, version=2)
@@ -322,12 +375,12 @@ def encrypt(file_path: Union[Path, str, NoneType] = None,
 
     version: int
         Determine the version of .cry format.
-        - 0         Save the original file name as plaintext in the header.
-        - 1         Save the original file name as ciphertext in the header.
+        - 0         Save the original file path as plaintext in the header.
+        - 1         Save the original file path as ciphertext in the header.
                     Reset seed, then encrypt. The body of encrypted file
                     will be just the same as version 0 if the seed remains
                     unchanged.
-        - 2         Save the original file name as ciphertext in the header.
+        - 2         Save the original file path as ciphertext in the header.
                     Change seed in particular way, then encrypt. The body
                     of encrypted file will be different if the original file
                     is renamed. RECOMMENDED.
@@ -383,13 +436,13 @@ def _decrypt(file_path: Path, seed: str, save_to: Path, chunk: int) -> Status:
             header_tuple = HeaderTuple.from_bytes(header)
         except ValueError:
             return Status.DECRYPT_FILE_ERROR
-        if header_tuple.type.upper() != b"CRY":
+        if header_tuple.format.upper() != b"CRY":
             return Status.DECRYPT_FILE_ERROR
         if header_tuple.version not in {b"0", b"1", b"2"}:
             return Status.DECRYPT_VERSION_ERROR
         if header_tuple.password_hash not in {
             None,
-            sha256(seed.encode("utf-8")).digest()
+            sha256(seed.encode("utf-8")).hexdigest().encode("utf-8")
         }:
             return Status.DECRYPT_PASSWORD_ERROR
 
@@ -522,12 +575,12 @@ def task(*, mode: int, file_path: Path, printer: Printer, **kwargs):
 
     version: int
         Determine the version of .cry format.
-        - 0         Save the original file name as plaintext in the header.
-        - 1         Save the original file name as ciphertext in the header.
+        - 0         Save the original file path as plaintext in the header.
+        - 1         Save the original file path as ciphertext in the header.
                     Reset seed, then encrypt. The body of encrypted file
                     will be just the same as version 0 if the seed remains
                     unchanged.
-        - 2         Save the original file name as ciphertext in the header.
+        - 2         Save the original file path as ciphertext in the header.
                     Change seed in particular way, then encrypt. The body
                     of encrypted file will be different if the original file
                     is renamed. RECOMMENDED.
