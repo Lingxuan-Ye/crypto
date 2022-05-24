@@ -9,8 +9,16 @@ from pathlib import Path, PosixPath, WindowsPath
 from typing import Any, NamedTuple, Optional, Union
 
 __author__ = "Lingxuan Ye"
-__version__ = "3.2.4"
-__all__ = ["Namespace", "bytes_xor", "encrypt", "decrypt", "task", "run"]
+__version__ = "3.2.5"
+__all__ = [
+    "Namespace",
+    "HeaderTuple",
+    "bytes_xor",
+    "encrypt",
+    "decrypt",
+    "task",
+    "run"
+]
 
 NoneType = type(None)
 
@@ -271,7 +279,7 @@ class Printer:
     def state(self):
         return self.__state
 
-    def set_state(self, quiet: bool):
+    def set_state(self, *, quiet: bool):
         self.__quiet = quiet
         self.__state = "quiet" if quiet else "verbose"
 
