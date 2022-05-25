@@ -2,14 +2,15 @@ import argparse
 import random
 from argparse import Namespace
 from base64 import b64decode, b64encode
+from dataclasses import dataclass
 from enum import Enum
 from hashlib import sha256
 from multiprocessing import Pool
 from pathlib import Path, PosixPath, WindowsPath
-from typing import Any, NamedTuple, Optional, Union
+from typing import Any, Optional, Union
 
 __author__ = "Lingxuan Ye"
-__version__ = "3.2.5"
+__version__ = "3.2.6"
 __all__ = [
     "Namespace",
     "HeaderTuple",
@@ -109,7 +110,8 @@ class Status(Enum):
     UNKNOWN_ERROR = "warning: unknown error."
 
 
-class HeaderTuple(NamedTuple):
+@dataclass
+class Header:
     """
     Header Example
     --------------
@@ -117,8 +119,8 @@ class HeaderTuple(NamedTuple):
     ├--------|---------|-----------------|---------┤
     | b"CRY" |  b"2"   | b"ABCabc123..." | b'Zm9v' |
 
-    Note that components of a header is seperated by b"\t", and that at the end
-    of a header, there will be a newline b"\n" following.
+    Note that the components of a header is seperated by b"\t", and that there
+    will be a trailing b"\n" at the end of a header.
 
     Components
     ----------
@@ -164,53 +166,10 @@ class HeaderTuple(NamedTuple):
     password_hash: Optional[bytes]
     path: bytes
 
-    def b64encode(self):
-        return self._replace(path=b64encode(self.path))
+    __slots__ = ("format", "version", "password_hash", "path")
 
-    def b64decode(self):
-        return self._replace(path=b64decode(self.path))
-
-    @classmethod
-    def from_bytes(cls, header: bytes):
-        has_error: bool = True
-        metadata: list = header.strip().split(b"\t")
-        if len(metadata) == 2:
-            # header == b"{format}\t{path}\n"
-            if metadata[0].isalpha():
-                metadata.insert(1, b"0")
-                metadata.insert(2, None)
-                has_error = False
-                return cls._make(metadata)
-        elif len(metadata) == 3:
-            # header == b"{format}\t{version}\t{path}\n"
-            if all((
-                metadata[0].isalpha(),
-                metadata[1].isdigit()
-            )):
-                metadata.insert(2, None)
-                has_error = False
-                return cls._make(metadata)
-        elif len(metadata) == 4:
-            # header == b"{format}\t{version}\t{password_hash}\t{path}\n"
-            if all((
-                metadata[0].isalpha(),
-                metadata[1].isdigit(),
-                metadata[2].isalnum()
-            )):
-                has_error = False
-                return cls._make(metadata)
-        if has_error:
-            raise ValueError("invalid header")
-
-    def to_bytes(self):
-        metadata: list = list(self)
-        if self.password_hash is None:
-            metadata.pop(2)
-        return b"\t".join(metadata) + b"\n"
-
-    @classmethod
-    def custom_init(
-        cls,
+    def __init__(
+        self,
         path: Union[bytes, str, Path],
         *,
         format: Union[bytes, str] = b"CRY",
@@ -218,46 +177,113 @@ class HeaderTuple(NamedTuple):
         password: Union[bytes, str, NoneType] = None
     ):
         if isinstance(path, bytes):
-            pass
+            self.path = path
         elif isinstance(path, str):
-            path = path.encode("utf-8")
+            self.path = path.encode("utf-8")
         elif isinstance(path, Path):
-            path = bytes(path)
+            self.path = bytes(path)
         else:
             raise ValueError(
                 "argument 'path' must be 'byte', 'str' or "
-                "'pathlib.Path' instance."
+                "'pathlib.Path' instance"
             )
         if isinstance(format, bytes) and format.isalpha():
-            pass
+            self.format = format
         elif isinstance(format, str) and format.isalpha():
-            format = format.encode("utf-8")
+            self.format = format.encode("utf-8")
         else:
             raise ValueError(
-                "argument 'format' must be 'byte' or 'str'."
+                "argument 'format' must be 'byte' or 'str'"
             )
         if isinstance(version, bytes) and version.isdigit():
-            pass
+            self.version = version
         elif isinstance(version, str) and version.isdigit():
-            version = version.encode("utf-8")
+            self.version = version.encode("utf-8")
         elif isinstance(version, int):
-            version = str(version).encode("utf-8")
+            self.version = str(version).encode("utf-8")
         else:
             raise ValueError(
-                "argument 'version' must be 'byte', 'str' or 'int'."
+                "argument 'version' must be 'byte', 'str' or 'int'"
             )
         if password is None:
-            password_hash = None
+            self.password_hash = None
         elif isinstance(password, bytes):
-            password_hash = sha256(password).hexdigest().encode("utf-8")
+            self.password_hash = sha256(password).hexdigest().encode("utf-8")
         elif isinstance(password, str):
             password = password.encode("utf-8")
-            password_hash = sha256(password).hexdigest().encode("utf-8")
+            self.password_hash = sha256(password).hexdigest().encode("utf-8")
         else:
             raise ValueError(
-                "argument 'password' must be 'byte', 'str' or 'NoneType'."
+                "argument 'password' must be 'byte', 'str' or 'NoneType'"
             )
-        return cls(format, version, password_hash, path)
+
+    def path_b64encode(self):
+        self.path = b64encode(self.path)
+        return self
+
+    def path_b64decode(self):
+        self.path = b64decode(self.path)
+        return self
+
+    @classmethod
+    def from_bytes(cls, header: bytes):
+        has_error: bool = True
+        metadata: list = header.strip().split(b"\t")
+        if len(metadata) == 2:
+            # header == b"{format}\t{path}\n"
+            if all((
+                metadata[0].isalpha(),
+                metadata[0].isascii()
+            )):
+                has_error = False
+                return cls(
+                    format=metadata[0],
+                    version=b"0",
+                    password=None,
+                    path=metadata[-1]
+                )
+        elif len(metadata) == 3:
+            # header == b"{format}\t{version}\t{path}\n"
+            if all((
+                metadata[0].isalpha(),
+                metadata[0].isascii(),
+                metadata[1].isdigit(),
+                metadata[1].isascii()
+            )):
+                has_error = False
+                return cls(
+                    format=metadata[0],
+                    version=metadata[1],
+                    password=None,
+                    path=metadata[-1]
+                )
+        elif len(metadata) == 4:
+            # header == b"{format}\t{version}\t{password_hash}\t{path}\n"
+            if all((
+                metadata[0].isalpha(),
+                metadata[0].isascii(),
+                metadata[1].isdigit(),
+                metadata[1].isascii(),
+                metadata[2].isalnum(),
+                metadata[2].isascii()
+            )):
+                has_error = False
+                header_inst = cls(
+                    format=metadata[0],
+                    version=metadata[1],
+                    password=None,
+                    path=metadata[-1]
+                )
+                header_inst.password_hash = metadata[2]
+                return header_inst
+        if has_error:
+            raise ValueError("invalid header")
+
+    def to_bytes(self):
+        metadata = [self.format, self.version, self.password_hash, self.path]
+        if self.password_hash is None:
+            metadata.pop(2)
+        return b"\t".join(metadata) + b"\n"
 
 
 class Printer:
@@ -309,7 +335,7 @@ def _encrypt(file_path: Path, seed: str, save_to: Path, chunk: int,
         return Status.ENCRYPT_VERSION_ERROR
     if version == 0:
         file_name = file_path.stem + ".cry"
-        header = HeaderTuple.custom_init(
+        header = Header(
             version=b"0",
             password=seed,
             path=file_path_bytes
@@ -321,18 +347,18 @@ def _encrypt(file_path: Path, seed: str, save_to: Path, chunk: int,
         key = randbytes(length)
         encrypted_path = bytes_xor(raw, key, length)
     if version == 1:
-        header = HeaderTuple.custom_init(
+        header = Header(
             version=b"1",
             password=seed,
             path=encrypted_path
-        ).b64encode().to_bytes()
+        ).path_b64encode().to_bytes()
         set_seed(seed, version=2)
     if version == 2:
-        header = HeaderTuple.custom_init(
+        header = Header(
             version=b"2",
             password=seed,
             path=encrypted_path
-        ).b64encode().to_bytes()
+        ).path_b64encode().to_bytes()
         seed = seed + sha256(file_path_bytes).hexdigest()
         set_seed(seed, version=2)
 
@@ -441,30 +467,30 @@ def _decrypt(file_path: Path, seed: str, save_to: Path, chunk: int) -> Status:
         if not header.endswith(b"\n"):
             return Status.DECRYPT_FILE_ERROR
         try:
-            header_tuple = HeaderTuple.from_bytes(header)
+            header_inst = Header.from_bytes(header)
         except ValueError:
             return Status.DECRYPT_FILE_ERROR
-        if header_tuple.format.upper() != b"CRY":
+        if header_inst.format.upper() != b"CRY":
             return Status.DECRYPT_FILE_ERROR
-        if header_tuple.version not in {b"0", b"1", b"2"}:
+        if header_inst.version not in {b"0", b"1", b"2"}:
             return Status.DECRYPT_VERSION_ERROR
-        if header_tuple.password_hash not in {
+        if header_inst.password_hash not in {
             None,
             sha256(seed.encode("utf-8")).hexdigest().encode("utf-8")
         }:
             return Status.DECRYPT_PASSWORD_ERROR
 
-        if header_tuple.version == b"0":
-            original_path_str = header_tuple.path.decode("utf-8")
+        if header_inst.version == b"0":
+            original_path_str = header_inst.path.decode("utf-8")
         else:
-            raw = header_tuple.b64decode().path
+            raw = header_inst.path_b64decode().path
             length = len(raw)
             key = randbytes(length)
             original_path_bytes = bytes_xor(raw, key, length)
             original_path_str = original_path_bytes.decode("utf-8")
-        if header_tuple.version == b"1":
+        if header_inst.version == b"1":
             set_seed(seed, version=2)
-        if header_tuple.version == b"2":
+        if header_inst.version == b"2":
             seed = seed + sha256(original_path_bytes).hexdigest()
             set_seed(seed, version=2)
 
@@ -647,7 +673,7 @@ def main(args: Namespace):
             "version": args.version,
             "printer": printer
         }
-        process_pool.apply_async(task, kwds=kwargs)
+        process_pool.apply_async(func=task, kwds=kwargs)
     process_pool.close()
     process_pool.join()
     printer(Status.EXIT.value, force_print=True)
