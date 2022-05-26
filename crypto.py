@@ -9,7 +9,7 @@ from pathlib import Path, PosixPath, WindowsPath
 from typing import Any, Union
 
 __author__ = "Lingxuan Ye"
-__version__ = "3.2.7"
+__version__ = "3.2.8"
 __all__ = [
     "Namespace",
     "Header",
@@ -202,7 +202,8 @@ class Header:
                     has_error = False
         else:
             raise AttributeError(
-                f"'{type(self).__name__}' object has no attribute '{__name__}'"
+                f"'{self.__class__.__name__}' object has no "
+                f"attribute '{__name}'"
             )
         if has_error:
             raise AttributeError("invalid value to assign")
