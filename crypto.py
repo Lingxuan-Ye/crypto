@@ -2,18 +2,17 @@ import argparse
 import random
 from argparse import Namespace
 from base64 import b64decode, b64encode
-from dataclasses import dataclass
 from enum import Enum
 from hashlib import sha256
 from multiprocessing import Pool
 from pathlib import Path, PosixPath, WindowsPath
-from typing import Any, Optional, Union
+from typing import Any, Union
 
 __author__ = "Lingxuan Ye"
-__version__ = "3.2.6"
+__version__ = "3.2.7"
 __all__ = [
     "Namespace",
-    "HeaderTuple",
+    "Header",
     "bytes_xor",
     "encrypt",
     "decrypt",
@@ -110,9 +109,8 @@ class Status(Enum):
     UNKNOWN_ERROR = "warning: unknown error."
 
 
-@dataclass
 class Header:
-    """
+    r"""
     Header Example
     --------------
     | format | version |  password_hash  |  path   |
@@ -160,13 +158,56 @@ class Header:
         version of .cry format. The principle is that path must be processed
         properly in order not to break the header line.
     """
-
-    format: bytes
-    version: bytes
-    password_hash: Optional[bytes]
-    path: bytes
-
-    __slots__ = ("format", "version", "password_hash", "path")
+    def __setattr__(self, __name: str, __value: Any) -> None:
+        has_error = True
+        if __name == "format":
+            if isinstance(__value, str):
+                __value = __value.encode("utf-8")
+            if isinstance(__value, bytes):
+                if all((
+                    __value.isascii(),
+                    __value.isalpha()
+                )):
+                    has_error = False
+        elif __name == "version":
+            if isinstance(__value, int):
+                __value = str(__value).encode("utf-8")
+            elif isinstance(__value, str):
+                __value = __value.encode("utf-8")
+            if isinstance(__value, bytes):
+                if all((
+                    __value.isascii(),
+                    __value.isdigit()
+                )):
+                    has_error = False
+        elif __name == "password_hash":
+            if __value is None:
+                has_error = False
+            elif isinstance(__value, str):
+                __value = __value.encode("utf-8")
+            if isinstance(__value, bytes):
+                if all((
+                    len(__value) == 64,
+                    __value.isascii(),
+                    __value.isalnum()
+                )):
+                    has_error = False
+        elif __name == "path":
+            if isinstance(__value, Path):
+                __value = bytes(__value)
+            elif isinstance(__value, str):
+                __value = __value.encode("utf-8")
+            if isinstance(__value, bytes):
+                if all(i not in {b"\t", b"\n", b"\r"} for i in __value):
+                    has_error = False
+        else:
+            raise AttributeError(
+                f"'{type(self).__name__}' object has no attribute '{__name__}'"
+            )
+        if has_error:
+            raise AttributeError("invalid value to assign")
+        else:
+            super().__setattr__(__name, __value)
 
     def __init__(
         self,
@@ -176,35 +217,9 @@ class Header:
         version: Union[bytes, str, int] = b"2",
         password: Union[bytes, str, NoneType] = None
     ):
-        if isinstance(path, bytes):
-            self.path = path
-        elif isinstance(path, str):
-            self.path = path.encode("utf-8")
-        elif isinstance(path, Path):
-            self.path = bytes(path)
-        else:
-            raise ValueError(
-                "argument 'path' must be 'byte', 'str' or "
-                "'pathlib.Path' instance"
-            )
-        if isinstance(format, bytes) and format.isalpha():
-            self.format = format
-        elif isinstance(format, str) and format.isalpha():
-            self.format = format.encode("utf-8")
-        else:
-            raise ValueError(
-                "argument 'format' must be 'byte' or 'str'"
-            )
-        if isinstance(version, bytes) and version.isdigit():
-            self.version = version
-        elif isinstance(version, str) and version.isdigit():
-            self.version = version.encode("utf-8")
-        elif isinstance(version, int):
-            self.version = str(version).encode("utf-8")
-        else:
-            raise ValueError(
-                "argument 'version' must be 'byte', 'str' or 'int'"
-            )
+        self.format = format
+        self.version = version
+        self.path = path
         if password is None:
             self.password_hash = None
         elif isinstance(password, bytes):
@@ -232,8 +247,8 @@ class Header:
         if len(metadata) == 2:
             # header == b"{format}\t{path}\n"
             if all((
-                metadata[0].isalpha(),
-                metadata[0].isascii()
+                metadata[0].isascii(),
+                metadata[0].isalpha()
             )):
                 has_error = False
                 return cls(
@@ -245,10 +260,10 @@ class Header:
         elif len(metadata) == 3:
             # header == b"{format}\t{version}\t{path}\n"
             if all((
-                metadata[0].isalpha(),
                 metadata[0].isascii(),
-                metadata[1].isdigit(),
-                metadata[1].isascii()
+                metadata[0].isalpha(),
+                metadata[1].isascii(),
+                metadata[1].isdigit()
             )):
                 has_error = False
                 return cls(
@@ -260,12 +275,12 @@ class Header:
         elif len(metadata) == 4:
             # header == b"{format}\t{version}\t{password_hash}\t{path}\n"
             if all((
-                metadata[0].isalpha(),
                 metadata[0].isascii(),
-                metadata[1].isdigit(),
+                metadata[0].isalpha(),
                 metadata[1].isascii(),
-                metadata[2].isalnum(),
-                metadata[2].isascii()
+                metadata[1].isdigit(),
+                metadata[2].isascii(),
+                metadata[2].isalnum()
             )):
                 has_error = False
                 header_inst = cls(
@@ -336,6 +351,7 @@ def _encrypt(file_path: Path, seed: str, save_to: Path, chunk: int,
     if version == 0:
         file_name = file_path.stem + ".cry"
         header = Header(
+            format=b"CRY",
             version=b"0",
             password=seed,
             path=file_path_bytes
@@ -348,6 +364,7 @@ def _encrypt(file_path: Path, seed: str, save_to: Path, chunk: int,
         encrypted_path = bytes_xor(raw, key, length)
     if version == 1:
         header = Header(
+            format=b"CRY",
             version=b"1",
             password=seed,
             path=encrypted_path
@@ -355,6 +372,7 @@ def _encrypt(file_path: Path, seed: str, save_to: Path, chunk: int,
         set_seed(seed, version=2)
     if version == 2:
         header = Header(
+            format=b"CRY",
             version=b"2",
             password=seed,
             path=encrypted_path
@@ -398,7 +416,7 @@ def encrypt(file_path: Union[Path, str, NoneType] = None,
         Specify the file to be encrypted.
 
     seed: str
-        Seed for the instance of random.Random or __main__._Random.
+        Seed for the instance of 'random.Random' or '__main__._Random'.
 
     save_to: Path | str | NoneType
         Specify the directory to save encrypted file.
@@ -543,7 +561,7 @@ def decrypt(file_path: Union[Path, str, NoneType] = None,
         Specify the file to be decrypted.
 
     seed: str
-        Seed for the instance of random.Random or __main__._Random.
+        Seed for the instance of 'random.Random' or '__main__._Random'.
 
     save_to: Path | str | NoneType
         Specify the directory to save decrypted file.
@@ -598,7 +616,7 @@ def task(*, mode: int, file_path: Path, printer: Printer, **kwargs):
         Specify the file be processed.
 
     seed: str
-        Seed for the instance of random.Random or __main__._Random.
+        Seed for the instance of 'random.Random' or '__main__._Random'.
 
     save_to: Path
         Specify the directory to save encrypted file.
