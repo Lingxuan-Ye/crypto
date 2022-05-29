@@ -9,7 +9,7 @@ from pathlib import Path, PosixPath, WindowsPath
 from typing import Any, Union
 
 __author__ = "Lingxuan Ye"
-__version__ = "3.2.9"
+__version__ = "3.2.10"
 __all__ = [
     "Namespace",
     "Header",
@@ -115,10 +115,10 @@ class Header:
     --------------
     | format | version |  password_hash  |  path   |
     ├--------|---------|-----------------|---------┤
-    | b"CRY" |  b"2"   | b"ABCabc123..." | b'Zm9v' |
+    | b'CRY' |  b'2'   | b'ABCabc123...' | b'Zm9v' |
 
-    Note that the components of a header is seperated by b"\t", and that there
-    will be a trailing b"\n" at the end of a header.
+    Note that the components of a header is seperated by b'\t', and that there
+    will be a trailing b'\n' at the end of a header.
 
     Components
     ----------
@@ -128,13 +128,13 @@ class Header:
 
     version:
         Version of .cry format.
-        - b"0"      Original file path is saved as plaintext.
-        - b"1"      Original file path is saved as ciphertext. To be more
+        - b'0'      Original file path is saved as plaintext.
+        - b'1'      Original file path is saved as ciphertext. To be more
                     specific, the path will be encrypted by function
                     'bytes_xor' with specified seed, then be encoded to Base64
                     in order not to break the header line. Reset seed, then
                     encrypt.
-        - b"2"      Original file path is saved as ciphertext. To be more
+        - b'2'      Original file path is saved as ciphertext. To be more
                     specific, the path will be encrypted by function
                     'bytes_xor' with specified seed, then be encoded to Base64
                     in order not to break the header line. Change seed as
@@ -143,7 +143,7 @@ class Header:
                     where 'file_path_bytes' are bytes form of original file
                     path. After that, encrypt file.
         In some old versions of .cry format, this component of header may not
-        exist. Files in those versions will be considered as b"0".
+        exist. Files in those versions will be considered as b'0'.
 
     password_hash:
         Use 'hashlib.sha256' and some other methods to get bytes of HEXADECIMAL
