@@ -9,7 +9,7 @@ from pathlib import Path, PosixPath, WindowsPath
 from typing import Any, Union
 
 __author__ = "Lingxuan Ye"
-__version__ = "3.2.8"
+__version__ = "3.2.9"
 __all__ = [
     "Namespace",
     "Header",
@@ -198,7 +198,7 @@ class Header:
             elif isinstance(__value, str):
                 __value = __value.encode("utf-8")
             if isinstance(__value, bytes):
-                if all(i not in {b"\t", b"\n", b"\r"} for i in __value):
+                if all(i not in (b"\t", b"\n", b"\r") for i in __value):
                     has_error = False
         else:
             raise AttributeError(
@@ -347,7 +347,7 @@ def _encrypt(file_path: Path, seed: str, save_to: Path, chunk: int,
     set_seed(seed, version=2)
     file_path_bytes = bytes(file_path)
 
-    if version not in {0, 1, 2}:
+    if version not in (0, 1, 2):
         return Status.ENCRYPT_VERSION_ERROR
     if version == 0:
         file_name = file_path.stem + ".cry"
@@ -470,7 +470,7 @@ def encrypt(file_path: Union[Path, str, NoneType] = None,
 
     if not isinstance(version, int):
         raise TypeError("argument 'version' must be 'int'.")
-    elif version not in {0, 1, 2}:
+    elif version not in (0, 1, 2):
         raise ValueError("argument 'version' must be 0, 1 or 2.")
 
     _encrypt(file_path, seed, save_to, chunk, version)
@@ -491,12 +491,12 @@ def _decrypt(file_path: Path, seed: str, save_to: Path, chunk: int) -> Status:
             return Status.DECRYPT_FILE_ERROR
         if header_inst.format.upper() != b"CRY":
             return Status.DECRYPT_FILE_ERROR
-        if header_inst.version not in {b"0", b"1", b"2"}:
+        if header_inst.version not in (b"0", b"1", b"2"):
             return Status.DECRYPT_VERSION_ERROR
-        if header_inst.password_hash not in {
+        if header_inst.password_hash not in (
             None,
             sha256(seed.encode("utf-8")).hexdigest().encode("utf-8")
-        }:
+        ):
             return Status.DECRYPT_PASSWORD_ERROR
 
         if header_inst.version == b"0":
