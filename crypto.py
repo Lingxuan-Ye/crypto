@@ -1,5 +1,4 @@
 import argparse
-import random
 from argparse import Namespace
 from base64 import b64decode, b64encode
 from enum import Enum
@@ -9,7 +8,7 @@ from pathlib import Path, PosixPath, WindowsPath
 from typing import Any, Union
 
 __author__ = "Lingxuan Ye"
-__version__ = "3.2.10"
+__version__ = "3.2.11"
 __all__ = [
     "Namespace",
     "Header",
@@ -25,10 +24,12 @@ NoneType = type(None)
 DEFAULT_CHUNK = 0x100000
 
 try:
-    random.randbytes
-except AttributeError:
+    from random import randbytes
+    from random import seed as set_seed
+except ImportError:
+    from random import Random
 
-    class _Random(random.Random):
+    class _Random(Random):
 
         def randbytes(self, n: int) -> bytes:
             return self.getrandbits(n * 8).to_bytes(n, "little")
@@ -36,9 +37,6 @@ except AttributeError:
     _inst = _Random()
     randbytes = _inst.randbytes
     set_seed = _inst.seed
-else:
-    randbytes = random.randbytes
-    set_seed = random.seed
 
 
 class Help(Enum):
