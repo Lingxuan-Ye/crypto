@@ -8,7 +8,7 @@ from pathlib import Path, PosixPath, WindowsPath
 from typing import Any, Union
 
 __author__ = "Lingxuan Ye"
-__version__ = "3.2.11"
+__version__ = "3.2.12"
 __all__ = [
     "Namespace",
     "Header",
@@ -148,13 +148,13 @@ class Header:
         (in order not to break the header line) digest of the password to
         further verify whether the password for decryption is correct. In some
         old versions of .cry format, this component of header may not exist.
-        Files in those versions will be continue decrypting with incorrect
+        Files in those versions will be continued decrypting with incorrect
         password by mistake.
 
     path:
         As aforementioned, how the original file path is saved depends on the
-        version of .cry format. The principle is that path must be processed
-        properly in order not to break the header line.
+        version of .cry format. The only principle is that the path must be
+        processed properly in order not to break the header line.
     """
     def __setattr__(self, __name: str, __value: Any) -> None:
         has_error = True
