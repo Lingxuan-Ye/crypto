@@ -8,7 +8,7 @@ from pathlib import Path, PosixPath, WindowsPath
 from typing import Any, Union
 
 __author__ = "Lingxuan Ye"
-__version__ = "3.2.12"
+__version__ = "3.2.13"
 __all__ = [
     "Namespace",
     "Header",
@@ -650,10 +650,64 @@ def task(*, mode: int, file_path: Path, printer: Printer, **kwargs):
     printer(status.value.format(file_path=file_path))
 
 
-def main(args: Namespace):
+def main():
     """
     Entry.
     """
+    parser = argparse.ArgumentParser(
+        description=Help.DESCRIPTION.value,
+        epilog=Help.EPILOG.value
+    )
+    parser.add_argument(
+        "-f", "--file",
+        action="append",
+        help=Help.FILE.value,
+        metavar=""
+    )
+    parser.add_argument(
+        "-s", "--save_to",
+        help=Help.SAVE_TO.value,
+        metavar=""
+    )
+    parser.add_argument(
+        "-p", "--password",
+        required=True,
+        help=Help.PASSWORD.value,
+        metavar=""
+    )
+    action_group = parser.add_mutually_exclusive_group()
+    action_group.add_argument(
+        "-e", "--encrypt",
+        action="store_true",
+        help=Help.ENCRYPT.value
+    )
+    action_group.add_argument(
+        "-d", "--decrypt",
+        action="store_true",
+        help=Help.DECRYPT.value
+    )
+    action_group.add_argument(
+        "-V", "--version",
+        default=2,
+        choices=(0, 1, 2),
+        type=int,
+        help=Help.VERSION.value,
+        metavar=""
+    )
+    print_control = parser.add_mutually_exclusive_group()
+    print_control.add_argument(
+        "-q", "--quiet",
+        action="store_true",
+        help=Help.QUIET.value
+    )
+    print_control.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help=Help.VERBOSE.value
+    )
+
+    args = parser.parse_args()
+
     printer = Printer(args.quiet)
 
     file_list = []
@@ -699,59 +753,4 @@ def main(args: Namespace):
 run = main
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description=Help.DESCRIPTION.value,
-        epilog=Help.EPILOG.value
-    )
-
-    parser.add_argument(
-        "-f", "--file",
-        action="append",
-        help=Help.FILE.value,
-        metavar=""
-    )
-    parser.add_argument(
-        "-s", "--save_to",
-        help=Help.SAVE_TO.value,
-        metavar=""
-    )
-    parser.add_argument(
-        "-p", "--password",
-        required=True,
-        help=Help.PASSWORD.value,
-        metavar=""
-    )
-
-    action_group = parser.add_mutually_exclusive_group()
-    action_group.add_argument(
-        "-e", "--encrypt",
-        action="store_true",
-        help=Help.ENCRYPT.value
-    )
-    action_group.add_argument(
-        "-d", "--decrypt",
-        action="store_true",
-        help=Help.DECRYPT.value
-    )
-    action_group.add_argument(
-        "-V", "--version",
-        default=2,
-        choices=(0, 1, 2),
-        type=int,
-        help=Help.VERSION.value,
-        metavar=""
-    )
-
-    print_control = parser.add_mutually_exclusive_group()
-    print_control.add_argument(
-        "-q", "--quiet",
-        action="store_true",
-        help=Help.QUIET.value
-    )
-    print_control.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        help=Help.VERBOSE.value
-    )
-
-    main(parser.parse_args())
+    main()
