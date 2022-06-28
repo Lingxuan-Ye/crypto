@@ -1,5 +1,4 @@
 import argparse
-from argparse import Namespace
 from base64 import b64decode, b64encode
 from enum import Enum
 from hashlib import sha256
@@ -8,9 +7,8 @@ from pathlib import Path, PosixPath, WindowsPath
 from typing import Any, Union
 
 __author__ = "Lingxuan Ye"
-__version__ = "3.2.13"
+__version__ = "3.2.14"
 __all__ = [
-    "Namespace",
     "Header",
     "bytes_xor",
     "encrypt",
@@ -651,9 +649,6 @@ def task(*, mode: int, file_path: Path, printer: Printer, **kwargs):
 
 
 def main():
-    """
-    Entry.
-    """
     parser = argparse.ArgumentParser(
         description=Help.DESCRIPTION.value,
         epilog=Help.EPILOG.value
