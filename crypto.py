@@ -7,7 +7,7 @@ from pathlib import Path, PosixPath, WindowsPath
 from typing import Any, Union
 
 __author__ = "Lingxuan Ye"
-__version__ = "3.2.14"
+__version__ = "3.2.15"
 __all__ = [
     "Header",
     "bytes_xor",
@@ -58,7 +58,7 @@ class Help(Enum):
     FILE = """
         file to be processed. if a directory is given, it will recursively
         process all the files in the directory. this option is allowed
-        to be specified multiple times and will be set to current working
+        to pass multiple paths and will be set to current working
         directory if omitted
     """
 
@@ -655,7 +655,8 @@ def main():
     )
     parser.add_argument(
         "-f", "--file",
-        action="append",
+        action="extend",
+        nargs="*",
         help=Help.FILE.value,
         metavar=""
     )
@@ -706,7 +707,7 @@ def main():
     printer = Printer(args.quiet)
 
     file_list = []
-    if args.file is None:
+    if args.file is None or not args.file:
         path_list = [Path()]
     else:
         path_list = [Path(i) for i in args.file]
