@@ -55,8 +55,8 @@ class Header:
                     __value = int(__value)
                 except:
                     pass
-                else:
-                    has_error = False
+            if isinstance(__value, int):
+                has_error = False
         elif __name == "password":
             if isinstance(__value, bytes):
                 __value = __value.decode("utf-8")
@@ -114,9 +114,9 @@ class Header:
                 dees_match = False
             path_in_bytes = cls.base64_path_decode(metadata[3])
         except:
-            return HeaderInfo(True, format, version, dees_match, path_in_bytes)
-        else:
             return HeaderInfo(False)
+        else:
+            return HeaderInfo(True, format, version, dees_match, path_in_bytes)
 
     def to_bytes(self) -> bytes:
         metadata = (

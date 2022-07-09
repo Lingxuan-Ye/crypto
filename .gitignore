@@ -4,7 +4,6 @@ __encrypted__/
 __decrypted__/
 __test__/__raw__/*
 __test__/__result__/
-.gitignore
 
 
 # Byte-compiled / optimized / DLL files

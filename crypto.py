@@ -35,22 +35,22 @@ def decrypt(
 ) -> StatusList:
     with open(file_path, "rb") as f:
         headerline = f.readline(0x1000)
-        header_info = Header.read(headerline, password)
-        if not header_info.is_valid:
-            return [Status.DE_FILE_ERROR]
-        if not header_info.does_match:
-            return [Status.DE_PASSWORD_ERROR]
+    header_info = Header.read(headerline, password)
+    if not header_info.is_valid:
+        return [Status.DE_FILE_ERROR]
+    if not header_info.does_match:
+        return [Status.DE_PASSWORD_ERROR]
 
-        # these two lines are just for mypy
-        if header_info.format is None:
-            return [Status.UN_ERROR]
+    # these two lines are just for mypy
+    if header_info.format is None:
+        return [Status.UN_ERROR]
 
-        format_type = FORMATS.get(header_info.format.upper())
-        if format_type is not None:
-            inst = format_type(password, file_path, save_to, chunk)
-            return inst.decrypt(header_info)
-        else:
-            return [Status.DE_FILE_ERROR]
+    format_type = FORMATS.get(header_info.format.upper())
+    if format_type is not None:
+        inst = format_type(password, file_path, save_to, chunk)
+        return inst.decrypt(header_info)
+    else:
+        return [Status.DE_FILE_ERROR]
 
 
 def task(
