@@ -48,8 +48,8 @@ class FormatType:
                     __value = int(__value)
                 except:
                     pass
-                else:
-                    has_error = False
+            if isinstance(__value, int):
+                has_error = False
         if has_error:
             raise AttributeError("invalid value to assign")
         return super().__setattr__(__name, __value)
@@ -206,6 +206,8 @@ class Cry(FormatType):
             if _part != path_parts[_index]:
                 pos = _index
                 break
+        else:
+            pos = cwd_parts_len - 1
         path_parts = [
             self.PATH_STRING.parent for _ in range(cwd_parts_len - pos - 1)
         ] + path_parts[pos + 1:]

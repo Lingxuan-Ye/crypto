@@ -2,9 +2,9 @@ import argparse
 from multiprocessing import Pool
 from pathlib import Path
 
-from src.crypto import task
-from src.docs import Help, Status
-from src.models import Printer
+from .crypto import task
+from .docs import Help, Status
+from .models import Printer
 
 
 def main() -> None:
@@ -85,8 +85,10 @@ def main() -> None:
             printer(Status.PATH_ERROR.value.format(file_path=str(path)))
 
     process_pool = Pool()
-    kwargs = {
+    for file_path in file_list:
+        kwargs = {
             "mode": 1 if args.decrypt else 0,
+            "file_path": file_path,
             "password": args.password,
             "save_to": args.save_to,
             "chunk": None,
@@ -94,8 +96,6 @@ def main() -> None:
             "version": args.version,
             "printer": printer
         }
-    for file_path in file_list:
-        kwargs["file_path"] = file_path
         process_pool.apply_async(func=task, kwds=kwargs)
     process_pool.close()
     process_pool.join()
