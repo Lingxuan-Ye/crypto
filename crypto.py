@@ -3,11 +3,11 @@ from pathlib import Path
 from typing import Optional
 
 from .docs import Status, StatusList
-from .models import Header, Printer, format
+from .models import Header, Printer, formatter
 
-FORMATS = {
-    i[0].upper(): i[1] for i in format.__dict__.items()
-    if isclass(i[1]) and issubclass(i[1], format.FormatType)
+FORMATTERS = {
+    i.FORMAT.upper(): i for i in formatter.__dict__.values()
+    if isclass(i) and issubclass(i, formatter.Formatter)
 }
 
 def encrypt(
@@ -19,9 +19,9 @@ def encrypt(
     format: str,
     version: int
 ) -> StatusList:
-    format_type = FORMATS.get(format.upper())
-    if format_type is not None:
-        inst = format_type(password, file_path, save_to, chunk)
+    formatter = FORMATTERS.get(format.upper())
+    if formatter is not None:
+        inst = formatter(password, file_path, save_to, chunk)
         return inst.encrypt(version)
     else:
         return [Status.EN_VERSION_ERROR]
@@ -40,14 +40,10 @@ def decrypt(
         return [Status.DE_FILE_ERROR]
     if not header_info.does_match:
         return [Status.DE_PASSWORD_ERROR]
-
-    # these two lines are just for mypy
-    if header_info.format is None:
-        return [Status.UN_ERROR]
-
-    format_type = FORMATS.get(header_info.format.upper())
-    if format_type is not None:
-        inst = format_type(password, file_path, save_to, chunk)
+    assert header_info.format is not None  # for mypy
+    formatter = FORMATTERS.get(header_info.format.upper())
+    if formatter is not None:
+        inst = formatter(password, file_path, save_to, chunk)
         return inst.decrypt(header_info)
     else:
         return [Status.DE_FILE_ERROR]

@@ -15,7 +15,7 @@ class PathString(NamedTuple):
     escape: str = "_ESC"
 
 
-class FormatType:
+class Formatter:
 
     FORMAT: str
     VERSIONS: Tuple[int, ...]
@@ -74,7 +74,7 @@ class FormatType:
         pass
 
 
-class Cry(FormatType):
+class Cry(Formatter):
     """
     Version
     -------
@@ -106,7 +106,7 @@ class Cry(FormatType):
         if version not in self.VERSIONS:
             return [Status.EN_VERSION_ERROR]
         elif version == 0:
-            file_name = self.file_path.stem + self.SUFFIX
+            file_name = self.file_path.name + self.SUFFIX
             headerline = Header(
                 self.FORMAT,
                 version,
@@ -170,8 +170,8 @@ class Cry(FormatType):
         set_seed(self.password, version=2)
 
         # these two lines are just for mypy
-        if header_info.format is None or header_info.path_in_bytes is None:
-            return [Status.UN_ERROR]
+        assert header_info.format is not None
+        assert header_info.path_in_bytes is not None
 
         if header_info.version not in self.VERSIONS:
             return [Status.DE_VERSION_ERROR]

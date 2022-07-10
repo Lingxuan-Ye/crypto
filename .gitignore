@@ -1,9 +1,9 @@
 # custom
-p.py
+*.bat
+?.py
+__test__/
 __encrypted__/
 __decrypted__/
-__test__/__raw__/*
-__test__/__result__/
 
 
 # Byte-compiled / optimized / DLL files
