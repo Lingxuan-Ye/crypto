@@ -23,8 +23,12 @@ class Formatter:
     DEFAULT_CHUNK = 0x10000000  # 256 MB
 
     @property
+    def EXTENSION(self) -> str:
+        return self.FORMAT.lower()
+
+    @property
     def SUFFIX(self) -> str:
-        return "." + self.FORMAT.lower()
+        return "." + self.EXTENSION
 
     def __setattr__(self, __name: str, __value: Any) -> None:
         has_error = True
@@ -66,6 +70,18 @@ class Formatter:
         self.file_path = file_path
         self.save_to = save_to
         self.chunk = chunk if chunk is not None else self.DEFAULT_CHUNK
+
+    @property
+    def encrypt_to(self) -> Path:
+        if self.save_to is None:
+            return Path(self.PATH_STRING.encrypt)
+        return self.save_to
+
+    @property
+    def decrypt_to(self) -> Path:
+        if self.save_to is None:
+            return Path(self.PATH_STRING.decrypt)
+        return self.save_to
 
     def encrypt(self, version: int) -> StatusList:
         pass
@@ -137,10 +153,7 @@ class Cry(Formatter):
             seed = self.password + hexdigest(file_path_in_bytes)
             set_seed(seed, version=2)
 
-        if self.save_to is None:
-            saving_path = Path(self.PATH_STRING.encrypt) / file_name
-        else:
-            saving_path = self.save_to / file_name
+        saving_path = self.encrypt_to / file_name
         saving_path.parent.mkdir(parents=True, exist_ok=True)
 
         with open(self.file_path, "rb") as f:
@@ -189,20 +202,24 @@ class Cry(Formatter):
             seed = self.password + hexdigest(decrypted_path_in_bytes)
             set_seed(seed, version=2)
 
-        if self.save_to is None:
-            save_to = Path(self.PATH_STRING.decrypt)
-        else:
-            save_to = self.save_to
-
-        # code below endeavors to solve malicious behavior which cause
+        # code below endeavors to solve malicious behavior which causes
         # writing file beyond specified top-level directory.
         path = Path(path_in_str).resolve()
         path_parts: list = list(path.parts)
         cwd_parts: tuple = Path.cwd().parts
         cwd_parts_len = len(cwd_parts)
+        # 'Path.resolve' returns absolute path basing on cwd, therefore
+        # it compares 'path' with cwd instead of specified directory.
         for _index, _part in enumerate(cwd_parts):
-            # 'Path.resolve' returns absolute path basing on cwd, therefore
-            # it compares 'path' with cwd instead of specified directory.
+            # 'Path.resolve(...).drive' (if any) is in uppercase while
+            # 'Path.cwd().drive' (if any) is in lowercase, which results in
+            # an absurd bug without if-statement below.
+            if _index == 0:
+                if _part.lower() == path_parts[0].lower():
+                    continue
+                else:
+                    pos = 0
+                    break
             if _part != path_parts[_index]:
                 pos = _index
                 break
@@ -215,7 +232,7 @@ class Cry(Formatter):
         for _index, _part in enumerate(path_parts[cwd_parts_len - pos - 1:]):
             if _part in self.PATH_STRING:  # '_part' can not be '"."'
                 path_parts[_index] = self.PATH_STRING.escape + _part
-        saving_path = save_to / "/".join(path_parts)
+        saving_path = self.decrypt_to / "/".join(path_parts)
         saving_path.parent.mkdir(parents=True, exist_ok=True)
 
         with open(self.file_path, "rb") as f:

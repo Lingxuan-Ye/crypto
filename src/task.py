@@ -6,11 +6,12 @@ from .docs import Status, StatusList
 from .models import Header, Printer, formatter
 
 FORMATTERS = {
-    i.FORMAT.upper(): i for i in formatter.__dict__.values()
+    i.FORMAT.upper(): i for i in vars(formatter).values()
     if isclass(i)
     and issubclass(i, formatter.Formatter)
     and i is not formatter.Formatter  # for class A, issubclass(A, A) is True
 }
+
 
 def encrypt(
     password: str,
