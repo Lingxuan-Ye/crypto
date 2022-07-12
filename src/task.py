@@ -77,8 +77,8 @@ def task(
         Specify saving directory.
 
     chunk: int
-        Determine the buffer size in I/O. It is set to 0x10000000 by default,
-        which means the buffer size is 256 MB.
+        Determine the buffer size in I/O. It is set to 0x1000000 by default,
+        which means the buffer size is 16 MB.
 
     format: str
         Specify encryption format. Valid when 'mode' is set to 0.

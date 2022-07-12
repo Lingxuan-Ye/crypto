@@ -20,7 +20,7 @@ class Formatter:
     FORMAT: str
     VERSIONS: Tuple[int, ...]
     PATH_STRING = PathString()
-    DEFAULT_CHUNK = 0x10000000  # 256 MB
+    DEFAULT_CHUNK = 0x1000000  # 16 MB
 
     @property
     def EXTENSION(self) -> str:
